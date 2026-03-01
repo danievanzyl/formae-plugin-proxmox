@@ -1,0 +1,50 @@
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+// Resource imports
+import "@proxmox/proxmox.pkl" as proxmox
+
+forma {
+
+  local myStack = new formae.Stack {
+    // Please provide a stack to bring the resources in this Forma under management
+    // label = ""
+    description = "Unmanaged resources"
+  }
+  myStack
+
+
+  local myProxmox = new formae.Target {
+    label = "my-proxmox"
+    namespace = "PROXMOX"
+    discoverable = true
+    config {
+      type = "PROXMOX"
+      url = "https://192.168.1.20:8006"
+      insecure = true
+    }
+  }
+  myProxmox
+
+  new proxmox.Storage {
+    label = "local"
+    storage = "local"
+    storageType = "dir"
+    content = "iso,vztmpl,backup"
+    shared = false
+    enabled = true
+    target = myProxmox.res
+    stack = myStack.res
+  }
+
+  new proxmox.Storage {
+    label = "local-lvm"
+    storage = "local-lvm"
+    storageType = "lvmthin"
+    content = "images,rootdir"
+    shared = false
+    enabled = true
+    target = myProxmox.res
+    stack = myStack.res
+  }
+}

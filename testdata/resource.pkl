@@ -1,0 +1,49 @@
+/*
+ * Conformance Test: Create VM
+ *
+ * This file defines the initial VM resource state for conformance testing.
+ * The conformance test harness will apply this file first.
+ */
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@proxmox/proxmox.pkl"
+
+local stackName = "plugin-sdk-test-stack"
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK conformance test stack"
+  }
+
+  new formae.Target {
+    label = "proxmox-target"
+    namespace = "PROXMOX"
+    config = new proxmox.Config {
+      url = read?("env:PROXMOX_URL") ?? "https://localhost:8006"
+      insecure = true
+    }
+  }
+
+  new proxmox.VirtualMachine {
+    label = "plugin-sdk-test-vm"
+    node = read?("env:PROXMOX_NODE") ?? "pve"
+    name = "formae-plugin-sdk-test-\(testRunID)"
+    description = "Test VM for plugin SDK conformance tests"
+    memory = 512
+    cores = 1
+    sockets = 1
+    ostype = "l26"
+    scsihw = "virtio-scsi-pci"
+    disk = new proxmox.VirtualMachineDisk {
+      storage = read?("env:PROXMOX_STORAGE") ?? "local-lvm"
+      size = 4
+    }
+    network = new proxmox.VirtualMachineNetwork {
+      model = "virtio"
+      bridge = "vmbr0"
+    }
+  }
+}

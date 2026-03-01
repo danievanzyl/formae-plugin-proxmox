@@ -1,0 +1,56 @@
+/*
+ * Conformance Test: Update VM (in-place)
+ *
+ * This file modifies mutable fields to trigger an in-place update.
+ * Changes from resource.pkl:
+ *   - name: added "-updated" suffix
+ *   - description: changed text
+ *   - memory: changed from 512 to 1024
+ *   - cores: changed from 1 to 2
+ *
+ * These fields do NOT have createOnly=true, so formae should update
+ * the resource in place without replacement.
+ */
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@proxmox/proxmox.pkl"
+
+local stackName = "plugin-sdk-test-stack"
+local testRunID = read("env:FORMAE_TEST_RUN_ID")
+
+forma {
+  new formae.Stack {
+    label = stackName
+    description = "Plugin SDK conformance test stack"
+  }
+
+  new formae.Target {
+    label = "proxmox-target"
+    namespace = "PROXMOX"
+    config = new proxmox.Config {
+      url = read?("env:PROXMOX_URL") ?? "https://localhost:8006"
+      insecure = true
+    }
+  }
+
+  new proxmox.VirtualMachine {
+    label = "plugin-sdk-test-vm"
+    node = read?("env:PROXMOX_NODE") ?? "pve"
+    name = "formae-plugin-sdk-test-\(testRunID)-updated"  // CHANGED
+    description = "Test VM - UPDATED"                      // CHANGED
+    memory = 1024                                          // CHANGED from 512
+    cores = 2                                              // CHANGED from 1
+    sockets = 1
+    ostype = "l26"                                         // unchanged (createOnly)
+    scsihw = "virtio-scsi-pci"                             // unchanged (createOnly)
+    disk = new proxmox.VirtualMachineDisk {                // unchanged (createOnly)
+      storage = read?("env:PROXMOX_STORAGE") ?? "local-lvm"
+      size = 4
+    }
+    network = new proxmox.VirtualMachineNetwork {          // unchanged (createOnly)
+      model = "virtio"
+      bridge = "vmbr0"
+    }
+  }
+}

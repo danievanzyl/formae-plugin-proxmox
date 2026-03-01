@@ -1,0 +1,368 @@
+/// Formae plugin schema for Proxmox VE.
+/// Manages nodes, QEMU virtual machines, and LXC containers.
+module proxmox
+
+import "@formae/formae.pkl"
+
+// =============================================================================
+// Target Configuration
+// =============================================================================
+
+/// Proxmox VE connection configuration.
+/// Secrets (API token) are read from PROXMOX_API_TOKEN env var.
+open class Config {
+    fixed type: String = "PROXMOX"
+
+    /// Proxmox VE API URL (e.g. "https://proxmox.example.com:8006")
+    url: String
+
+    /// Skip TLS certificate verification (for self-signed certs)
+    insecure: Boolean = false
+}
+
+// =============================================================================
+// Storage (discoverable, read-only)
+// =============================================================================
+
+/// A Proxmox VE storage pool.
+@formae.ResourceHint {
+    type = "PROXMOX::Storage::Storage"
+    identifier = "$.storage"
+    discoverable = true
+}
+class Storage extends formae.Resource {
+    fixed hidden type: String = "PROXMOX::Storage::Storage"
+
+    /// Storage name
+    @formae.FieldHint {}
+    storage: String
+
+    /// Storage type (lvm, dir, nfs, etc.)
+    @formae.FieldHint {}
+    storageType: String?
+
+    /// Allowed content types
+    @formae.FieldHint {}
+    content: String?
+
+    /// Whether storage is shared across nodes
+    @formae.FieldHint {}
+    shared: Boolean?
+
+    /// Whether storage is enabled
+    @formae.FieldHint {}
+    enabled: Boolean?
+}
+
+// =============================================================================
+// Node (parent resource, discoverable, read-only)
+// =============================================================================
+
+/// A Proxmox VE cluster node.
+@formae.ResourceHint {
+    type = "PROXMOX::Node::Node"
+    identifier = "$.node"
+    discoverable = true
+}
+class Node extends formae.Resource {
+    fixed hidden type: String = "PROXMOX::Node::Node"
+
+    /// Node name
+    @formae.FieldHint {}
+    node: String
+
+    /// Node status (online/offline)
+    @formae.FieldHint {}
+    status: String?
+
+    /// Total logical CPUs
+    @formae.FieldHint {}
+    maxcpu: Int?
+
+    /// Total memory in bytes
+    @formae.FieldHint {}
+    maxmem: Int?
+
+    /// Total disk in bytes
+    @formae.FieldHint {}
+    maxdisk: Int?
+}
+
+// =============================================================================
+// Container Template (child of Node, managed)
+// =============================================================================
+
+/// An LXC container template on a Proxmox VE node storage.
+@formae.ResourceHint {
+    type = "PROXMOX::Container::Template"
+    identifier = "$.id"
+    discoverable = true
+    parent = "PROXMOX::Node::Node"
+    listParam = new formae.ListProperty {
+        parentProperty = "node"
+        listParameter = "node"
+    }
+}
+class Template extends formae.Resource {
+    fixed hidden type: String = "PROXMOX::Container::Template"
+
+    /// Target node name
+    @formae.FieldHint { createOnly = true }
+    node: String|formae.Resolvable
+
+    /// Target storage name (e.g. "local")
+    @formae.FieldHint { createOnly = true }
+    storage: String|formae.Resolvable
+
+    /// Template filename from the Proxmox appliance index
+    @formae.FieldHint { createOnly = true }
+    template: String
+
+    /// Full volume ID (e.g. "local:vztmpl/debian-12-standard_12.0-1_amd64.tar.zst")
+    @formae.FieldHint {}
+    volid: String?
+
+    /// Template file size in bytes
+    @formae.FieldHint {}
+    size: Int?
+}
+
+// =============================================================================
+// Virtual Machine Sub-Resources
+// =============================================================================
+
+/// Disk configuration for a QEMU virtual machine.
+@formae.SubResourceHint {}
+class VirtualMachineDisk extends formae.SubResource {
+    /// Storage name (e.g. "local-lvm") or Resolvable reference to a Storage resource
+    @formae.FieldHint {}
+    storage: String|formae.Resolvable
+
+    /// Disk size in GiB
+    @formae.FieldHint {}
+    size: Int
+
+    /// Cache mode (writeback, writethrough, none, directsync, unsafe)
+    @formae.FieldHint {}
+    cache: String?
+
+    /// Enable TRIM/discard passthrough
+    @formae.FieldHint {}
+    discard: Boolean?
+}
+
+/// Network interface configuration for a QEMU virtual machine.
+@formae.SubResourceHint {}
+class VirtualMachineNetwork extends formae.SubResource {
+    /// NIC model (virtio, e1000, etc.)
+    @formae.FieldHint {}
+    model: String = "virtio"
+
+    /// Bridge to attach to (e.g. "vmbr0")
+    @formae.FieldHint {}
+    bridge: String = "vmbr0"
+
+    /// Enable firewall on this interface
+    @formae.FieldHint {}
+    firewall: Boolean?
+
+    /// VLAN tag (1-4094)
+    @formae.FieldHint {}
+    tag: Int?
+}
+
+// =============================================================================
+// Virtual Machine (child of Node)
+// =============================================================================
+
+/// A QEMU/KVM virtual machine on a Proxmox VE node.
+@formae.ResourceHint {
+    type = "PROXMOX::Compute::VirtualMachine"
+    identifier = "$.id"
+    parent = "PROXMOX::Node::Node"
+    listParam = new formae.ListProperty {
+        parentProperty = "node"
+        listParameter = "node"
+    }
+}
+class VirtualMachine extends formae.Resource {
+    fixed hidden type: String = "PROXMOX::Compute::VirtualMachine"
+
+    /// Target node name (resolved from parent Node)
+    @formae.FieldHint { createOnly = true }
+    node: String|formae.Resolvable
+
+    /// VM ID (100-999999999). Auto-assigned if omitted.
+    @formae.FieldHint { createOnly = true }
+    vmid: Int?
+
+    /// Display name
+    @formae.FieldHint {}
+    name: String
+
+    /// Description / notes
+    @formae.FieldHint {}
+    description: String?
+
+    /// Memory in MiB
+    @formae.FieldHint {}
+    memory: Int = 2048
+
+    /// CPU cores per socket
+    @formae.FieldHint {}
+    cores: Int = 1
+
+    /// Number of CPU sockets
+    @formae.FieldHint {}
+    sockets: Int = 1
+
+    /// Guest OS type (l26, win10, win11, etc.)
+    @formae.FieldHint { createOnly = true }
+    ostype: String = "l26"
+
+    /// SCSI controller type
+    @formae.FieldHint { createOnly = true }
+    scsihw: String = "virtio-scsi-pci"
+
+    /// BIOS type (seabios or ovmf)
+    @formae.FieldHint { createOnly = true }
+    bios: String?
+
+    /// Machine type (q35, pc, etc.)
+    @formae.FieldHint { createOnly = true }
+    machine: String?
+
+    /// Start VM on host boot
+    @formae.FieldHint {}
+    onboot: Boolean?
+
+    /// Primary disk configuration
+    @formae.FieldHint { createOnly = true }
+    disk: VirtualMachineDisk
+
+    /// Primary network interface
+    @formae.FieldHint { createOnly = true }
+    network: VirtualMachineNetwork
+
+    /// Current VM status (computed by provider)
+    @formae.FieldHint {}
+    status: String?
+}
+
+// =============================================================================
+// Container Sub-Resources
+// =============================================================================
+
+/// Root filesystem configuration for an LXC container.
+@formae.SubResourceHint {}
+class ContainerRootfs extends formae.SubResource {
+    /// Storage name (e.g. "local-lvm") or Resolvable reference to a Storage resource
+    @formae.FieldHint {}
+    storage: String|formae.Resolvable
+
+    /// Root filesystem size in GiB
+    @formae.FieldHint {}
+    size: Int
+}
+
+/// Network interface configuration for an LXC container.
+@formae.SubResourceHint {}
+class ContainerNetwork extends formae.SubResource {
+    /// Interface name inside the container
+    @formae.FieldHint {}
+    name: String = "eth0"
+
+    /// Bridge to attach to
+    @formae.FieldHint {}
+    bridge: String = "vmbr0"
+
+    /// IPv4 address (CIDR notation or "dhcp")
+    @formae.FieldHint {}
+    ip: String = "dhcp"
+
+    /// IPv4 gateway
+    @formae.FieldHint {}
+    gw: String?
+
+    /// Enable firewall
+    @formae.FieldHint {}
+    firewall: Boolean?
+
+    /// VLAN tag (1-4094)
+    @formae.FieldHint {}
+    tag: Int?
+}
+
+// =============================================================================
+// Container (child of Node)
+// =============================================================================
+
+/// An LXC container on a Proxmox VE node.
+@formae.ResourceHint {
+    type = "PROXMOX::Compute::Container"
+    identifier = "$.id"
+    parent = "PROXMOX::Node::Node"
+    listParam = new formae.ListProperty {
+        parentProperty = "node"
+        listParameter = "node"
+    }
+}
+class Container extends formae.Resource {
+    fixed hidden type: String = "PROXMOX::Compute::Container"
+
+    /// Target node name (resolved from parent Node)
+    @formae.FieldHint { createOnly = true }
+    node: String|formae.Resolvable
+
+    /// Container ID (100-999999999). Auto-assigned if omitted.
+    @formae.FieldHint { createOnly = true }
+    vmid: Int?
+
+    /// Container hostname
+    @formae.FieldHint {}
+    hostname: String
+
+    /// Description / notes
+    @formae.FieldHint {}
+    description: String?
+
+    /// OS template volid or Resolvable reference to a Template resource
+    @formae.FieldHint { createOnly = true }
+    ostemplate: String|formae.Resolvable
+
+    /// Memory in MiB
+    @formae.FieldHint {}
+    memory: Int = 512
+
+    /// Swap in MiB
+    @formae.FieldHint {}
+    swap: Int = 512
+
+    /// CPU cores
+    @formae.FieldHint {}
+    cores: Int = 1
+
+    /// Run as unprivileged container
+    @formae.FieldHint { createOnly = true }
+    unprivileged: Boolean = true
+
+    /// Start container on host boot
+    @formae.FieldHint {}
+    onboot: Boolean?
+
+    /// Root filesystem configuration
+    @formae.FieldHint { createOnly = true }
+    rootfs: ContainerRootfs
+
+    /// Primary network interface
+    @formae.FieldHint { createOnly = true }
+    network: ContainerNetwork
+
+    /// Root password (write-only, never returned by Read)
+    @formae.FieldHint { writeOnly = true }
+    password: String?
+
+    /// Current container status (computed by provider)
+    @formae.FieldHint {}
+    status: String?
+}

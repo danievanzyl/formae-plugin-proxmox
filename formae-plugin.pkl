@@ -1,0 +1,10 @@
+name = "proxmox"
+version = "0.1.0"
+namespace = "PROXMOX"
+description = "Proxmox VE plugin for managing nodes, VMs, and containers"
+license = "MIT"
+minFormaeVersion = "0.80.1"
+
+output {
+  renderer = new JsonRenderer {}
+}
