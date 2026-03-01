@@ -1,0 +1,49 @@
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+// Resource imports
+import "@proxmox/proxmox.pkl" as proxmox
+
+forma {
+
+  local testing1 = new formae.Stack {
+    label = "testing1"
+    description = "Proxmox test resources"
+  }
+  testing1
+
+
+  local myProxmox = new formae.Target {
+    label = "my-proxmox"
+    namespace = "PROXMOX"
+    discoverable = true
+    config {
+      type = "PROXMOX"
+      url = "https://192.168.1.20:8006"
+      insecure = true
+    }
+  }
+  myProxmox
+
+  new proxmox.Template {
+    label = "debian-12"
+    node = "pve"
+    storage = "local"
+    template = "debian-12-standard_12.12-1_amd64.tar.zst"
+    volid = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
+    size = 123731847
+    target = myProxmox.res
+    stack = testing1.res
+  }
+
+  new proxmox.Node {
+    label = "pve"
+    node = "pve"
+    status = "online"
+    maxcpu = 8
+    maxmem = 8148365312
+    maxdisk = 72833196032
+    target = myProxmox.res
+    stack = testing1.res
+  }
+}

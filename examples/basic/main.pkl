@@ -1,0 +1,73 @@
+amends "@formae/forma.pkl"
+import "@formae/formae.pkl"
+
+import "@proxmox/proxmox.pkl" as proxmox
+
+forma {
+
+  local myStack = new formae.Stack {
+    label = "testing1"
+    description = "Proxmox test resources"
+  }
+  myStack
+
+  local myProxmox = new formae.Target {
+    label = "my-proxmox"
+    namespace = "PROXMOX"
+    discoverable = true
+    config = new proxmox.Config {
+      url = "https://192.168.1.20:8006"
+      insecure = true
+    }
+  }
+  myProxmox
+
+  new proxmox.VirtualMachine {
+    label = "test-vm"
+    node = new formae.Resolvable { label = "pve"; type = "PROXMOX::Node::Node"; stack = "testing1"; property = "node" }
+    name = "test-vm"
+    memory = 2048
+    cores = 1
+    sockets = 1
+    disk = new proxmox.VirtualMachineDisk {
+      storage = new formae.Resolvable { label = "local-lvm"; type = "PROXMOX::Storage::Storage"; stack = "testing1"; property = "storage" }
+      size = 32
+    }
+    network = new proxmox.VirtualMachineNetwork {
+      model = "virtio"
+      bridge = "vmbr0"
+    }
+    target = myProxmox.res
+    stack = myStack.res
+  }
+
+  new proxmox.Template {
+    label = "debian-12"
+    node = "pve"
+    storage = "local"
+    template = "debian-12-standard_12.12-1_amd64.tar.zst"
+    target = myProxmox.res
+    stack = myStack.res
+  }
+
+  new proxmox.Container {
+    label = "test-ct"
+    node = new formae.Resolvable { label = "pve"; type = "PROXMOX::Node::Node"; stack = "testing1"; property = "node" }
+    hostname = "test-ct"
+    ostemplate = new formae.Resolvable { label = "debian-12"; type = "PROXMOX::Container::Template"; stack = "testing1"; property = "volid" }
+    memory = 512
+    swap = 512
+    cores = 1
+    rootfs = new proxmox.ContainerRootfs {
+      storage = new formae.Resolvable { label = "local-lvm"; type = "PROXMOX::Storage::Storage"; stack = "testing1"; property = "storage" }
+      size = 8
+    }
+    network = new proxmox.ContainerNetwork {
+      name = "eth0"
+      bridge = "vmbr0"
+      ip = "dhcp"
+    }
+    target = myProxmox.res
+    stack = myStack.res
+  }
+}
