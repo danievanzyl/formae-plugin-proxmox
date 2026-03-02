@@ -18,10 +18,74 @@ forma {
     config = new proxmox.Config {
       url = "https://192.168.1.20:8006"
       insecure = true
+      startId = 200
     }
   }
   myProxmox
 
+  // ---- Cloud Image: download Ubuntu cloud image ----
+  new proxmox.CloudImage {
+    label = "ubuntu-24.04"
+    node = new formae.Resolvable { label = "pve"; type = "PROXMOX::Node::Node"; stack = "testing1"; property = "node" }
+    storage = "local"
+    url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+    filename = "noble-server-cloudimg-amd64.qcow2"
+    target = myProxmox.res
+    stack = myStack.res
+  }
+
+  // ---- VM Template: create from cloud image with cloud-init defaults ----
+  new proxmox.VMTemplate {
+    label = "ubuntu-template"
+    node = new formae.Resolvable { label = "pve"; type = "PROXMOX::Node::Node"; stack = "testing1"; property = "node" }
+    name = "ubuntu-24.04-template"
+    cloudImage = new formae.Resolvable { label = "ubuntu-24.04"; type = "PROXMOX::Image::CloudImage"; stack = "testing1"; property = "volid" }
+    memory = 1024
+    cores = 1
+    disk = new proxmox.VMTemplateDisk {
+      storage = new formae.Resolvable { label = "local-lvm"; type = "PROXMOX::Storage::Storage"; stack = "testing1"; property = "storage" }
+      size = 20
+    }
+    network = new proxmox.VirtualMachineNetwork {
+      model = "virtio"
+      bridge = "vmbr0"
+    }
+    cloudInit = new proxmox.CloudInit {
+      ciuser = "ubuntu"
+      ipconfig0 = "ip=dhcp"
+    }
+    target = myProxmox.res
+    stack = myStack.res
+  }
+
+  // ---- VM cloned from template with overrides ----
+  new proxmox.VirtualMachine {
+    label = "web-server-1"
+    node = new formae.Resolvable { label = "pve"; type = "PROXMOX::Node::Node"; stack = "testing1"; property = "node" }
+    name = "web-server-1"
+    cloneFrom = new formae.Resolvable { label = "ubuntu-template"; type = "PROXMOX::Compute::VMTemplate"; stack = "testing1"; property = "id" }
+    fullClone = true
+    memory = 4096
+    cores = 4
+    disk = new proxmox.VirtualMachineDisk {
+      storage = new formae.Resolvable { label = "local-lvm"; type = "PROXMOX::Storage::Storage"; stack = "testing1"; property = "storage" }
+      size = 50
+    }
+    network = new proxmox.VirtualMachineNetwork {
+      model = "virtio"
+      bridge = "vmbr0"
+    }
+    cloudInit = new proxmox.CloudInit {
+      ciuser = "ubuntu"
+      sshkeys = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKxSnMuuZZIJi8mN6KRitYzNSply0+c3qmWvjlnoVxZR danie@mac"
+      ipconfig0 = "ip=dhcp"
+      cicustom = "vendor=local:snippets/vendor.yaml"
+    }
+    target = myProxmox.res
+    stack = myStack.res
+  }
+
+  // ---- Standalone VM (no clone, no auto-start) ----
   new proxmox.VirtualMachine {
     label = "test-vm"
     node = new formae.Resolvable { label = "pve"; type = "PROXMOX::Node::Node"; stack = "testing1"; property = "node" }
@@ -29,6 +93,7 @@ forma {
     memory = 2048
     cores = 1
     sockets = 1
+    start = false
     disk = new proxmox.VirtualMachineDisk {
       storage = new formae.Resolvable { label = "local-lvm"; type = "PROXMOX::Storage::Storage"; stack = "testing1"; property = "storage" }
       size = 32
@@ -41,6 +106,7 @@ forma {
     stack = myStack.res
   }
 
+  // ---- LXC Container Template ----
   new proxmox.Template {
     label = "debian-12"
     node = "pve"
@@ -50,6 +116,7 @@ forma {
     stack = myStack.res
   }
 
+  // ---- LXC Container ----
   new proxmox.Container {
     label = "test-ct"
     node = new formae.Resolvable { label = "pve"; type = "PROXMOX::Node::Node"; stack = "testing1"; property = "node" }
