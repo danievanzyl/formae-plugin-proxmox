@@ -11,6 +11,7 @@ import (
 type TargetConfig struct {
 	URL      string `json:"url"`
 	Insecure bool   `json:"insecure"`
+	StartID  int    `json:"startId"`
 }
 
 func parseTargetConfig(data json.RawMessage) (*TargetConfig, error) {
@@ -48,5 +49,6 @@ func (cc *clientCache) get(targetConfig json.RawMessage) (*Client, error) {
 	}
 
 	cc.client = NewClient(cfg.URL, apiToken, cfg.Insecure)
+	cc.client.startID = cfg.StartID
 	return cc.client, nil
 }

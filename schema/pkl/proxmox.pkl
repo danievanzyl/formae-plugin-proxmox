@@ -18,6 +18,9 @@ open class Config {
 
     /// Skip TLS certificate verification (for self-signed certs)
     insecure: Boolean = false
+
+    /// Starting VM ID for auto-assignment (100-999999999). If omitted, uses Proxmox default.
+    startId: Int?
 }
 
 // =============================================================================
@@ -52,6 +55,58 @@ class Storage extends formae.Resource {
     /// Whether storage is enabled
     @formae.FieldHint {}
     enabled: Boolean?
+}
+
+// =============================================================================
+// Cloud Image (child of Node, managed)
+// =============================================================================
+
+/// A cloud disk image downloaded from a vendor URL to Proxmox storage.
+/// Used as the base disk for VMTemplate resources.
+@formae.ResourceHint {
+    type = "PROXMOX::Image::CloudImage"
+    identifier = "$.id"
+    discoverable = true
+    parent = "PROXMOX::Node::Node"
+    listParam = new formae.ListProperty {
+        parentProperty = "node"
+        listParameter = "node"
+    }
+}
+class CloudImage extends formae.Resource {
+    fixed hidden type: String = "PROXMOX::Image::CloudImage"
+
+    /// Target node name
+    @formae.FieldHint { createOnly = true }
+    node: String|formae.Resolvable
+
+    /// Storage to download to (must have "import" content type enabled)
+    @formae.FieldHint { createOnly = true }
+    storage: String|formae.Resolvable
+
+    /// Remote URL to download from (e.g. "https://cloud-images.ubuntu.com/...")
+    @formae.FieldHint { createOnly = true }
+    url: String
+
+    /// Filename to save as on storage (e.g. "ubuntu-24.04-cloudimg-amd64.img")
+    @formae.FieldHint { createOnly = true }
+    filename: String
+
+    /// Optional SHA256 checksum for verification
+    @formae.FieldHint { createOnly = true }
+    checksum: String?
+
+    /// Checksum algorithm (sha256, sha512, md5). Defaults to sha256 if checksum is set.
+    @formae.FieldHint { createOnly = true }
+    checksumAlgorithm: String?
+
+    /// Full volume ID after download (e.g. "local:import/ubuntu-24.04-cloudimg-amd64.img")
+    @formae.FieldHint {}
+    volid: String?
+
+    /// File size in bytes (populated after download)
+    @formae.FieldHint {}
+    size: Int?
 }
 
 // =============================================================================
@@ -128,6 +183,50 @@ class Template extends formae.Resource {
 }
 
 // =============================================================================
+// Cloud-Init Configuration (sub-resource)
+// =============================================================================
+
+/// Cloud-init configuration for QEMU virtual machines.
+@formae.SubResourceHint {}
+class CloudInit extends formae.SubResource {
+    /// Default user name
+    @formae.FieldHint {}
+    ciuser: String?
+
+    /// Default user password (write-only, not returned by Read)
+    @formae.FieldHint { writeOnly = true }
+    cipassword: String?
+
+    /// SSH public keys (one per line, OpenSSH format)
+    @formae.FieldHint { writeOnly = true }
+    sshkeys: String?
+
+    /// IP configuration for first interface (e.g. "ip=dhcp" or "ip=x.x.x.x/24,gw=y.y.y.y")
+    @formae.FieldHint {}
+    ipconfig0: String?
+
+    /// DNS server(s), space-separated
+    @formae.FieldHint {}
+    nameserver: String?
+
+    /// DNS search domain(s), space-separated
+    @formae.FieldHint {}
+    searchdomain: String?
+
+    /// Cloud-init type (nocloud, configdrive2)
+    @formae.FieldHint {}
+    citype: String?
+
+    /// Custom cloud-init config (e.g. "vendor=local:snippets/vendor.yaml")
+    @formae.FieldHint {}
+    cicustom: String?
+
+    /// Auto-upgrade packages on first boot
+    @formae.FieldHint {}
+    ciupgrade: Boolean?
+}
+
+// =============================================================================
 // Virtual Machine Sub-Resources
 // =============================================================================
 
@@ -169,6 +268,122 @@ class VirtualMachineNetwork extends formae.SubResource {
     /// VLAN tag (1-4094)
     @formae.FieldHint {}
     tag: Int?
+}
+
+// =============================================================================
+// VM Template Disk (sub-resource)
+// =============================================================================
+
+/// Disk configuration for a VM template. The disk is imported from a CloudImage.
+@formae.SubResourceHint {}
+class VMTemplateDisk extends formae.SubResource {
+    /// Storage for the imported disk (e.g. "local-lvm")
+    @formae.FieldHint {}
+    storage: String|formae.Resolvable
+
+    /// Resize disk to this size in GiB after import (optional, must be >= image size)
+    @formae.FieldHint {}
+    size: Int?
+
+    /// Cache mode
+    @formae.FieldHint {}
+    cache: String?
+
+    /// Enable TRIM/discard
+    @formae.FieldHint {}
+    discard: Boolean?
+}
+
+// =============================================================================
+// VM Template (child of Node, managed)
+// =============================================================================
+
+/// A QEMU VM template created from a cloud image with cloud-init defaults.
+/// Multi-step creation: create VM → import disk → configure cloud-init → convert to template.
+@formae.ResourceHint {
+    type = "PROXMOX::Compute::VMTemplate"
+    identifier = "$.id"
+    discoverable = true
+    parent = "PROXMOX::Node::Node"
+    listParam = new formae.ListProperty {
+        parentProperty = "node"
+        listParameter = "node"
+    }
+}
+class VMTemplate extends formae.Resource {
+    fixed hidden type: String = "PROXMOX::Compute::VMTemplate"
+
+    /// Target node name
+    @formae.FieldHint { createOnly = true }
+    node: String|formae.Resolvable
+
+    /// VM ID (100-999999999). Auto-assigned if omitted.
+    @formae.FieldHint { createOnly = true }
+    vmid: Int?
+
+    /// Template display name
+    @formae.FieldHint {}
+    name: String
+
+    /// Description / notes
+    @formae.FieldHint {}
+    description: String?
+
+    /// Cloud image to import as disk (resolves to CloudImage volid)
+    @formae.FieldHint { createOnly = true }
+    cloudImage: String|formae.Resolvable
+
+    /// Memory in MiB (default for VMs cloned from this template)
+    @formae.FieldHint {}
+    memory: Int = 2048
+
+    /// CPU cores per socket
+    @formae.FieldHint {}
+    cores: Int = 1
+
+    /// Number of CPU sockets
+    @formae.FieldHint {}
+    sockets: Int = 1
+
+    /// Guest OS type
+    @formae.FieldHint { createOnly = true }
+    ostype: String = "l26"
+
+    /// SCSI controller type
+    @formae.FieldHint { createOnly = true }
+    scsihw: String = "virtio-scsi-pci"
+
+    /// BIOS type
+    @formae.FieldHint { createOnly = true }
+    bios: String?
+
+    /// Machine type
+    @formae.FieldHint { createOnly = true }
+    machine: String?
+
+    /// Enable QEMU guest agent
+    @formae.FieldHint {}
+    agent: Boolean?
+
+    /// Start on host boot
+    @formae.FieldHint {}
+    onboot: Boolean?
+
+    /// Disk configuration (imported from cloud image)
+    @formae.FieldHint { createOnly = true }
+    disk: VMTemplateDisk
+
+    /// Network interface
+    @formae.FieldHint { createOnly = true }
+    network: VirtualMachineNetwork
+
+    /// Default cloud-init configuration baked into the template
+    @formae.FieldHint {}
+    cloudInit: CloudInit?
+
+    /// Current status (computed)
+    @formae.FieldHint {}
+    status: String?
 }
 
 // =============================================================================
@@ -236,13 +451,33 @@ class VirtualMachine extends formae.Resource {
     @formae.FieldHint {}
     onboot: Boolean?
 
-    /// Primary disk configuration
-    @formae.FieldHint { createOnly = true }
-    disk: VirtualMachineDisk
+    /// Enable QEMU guest agent
+    @formae.FieldHint {}
+    agent: Boolean?
 
-    /// Primary network interface
+    /// Primary disk configuration (optional when cloning from template)
+    @formae.FieldHint {}
+    disk: VirtualMachineDisk?
+
+    /// Primary network interface (optional when cloning from template)
+    @formae.FieldHint {}
+    network: VirtualMachineNetwork?
+
+    /// Cloud-init configuration
+    @formae.FieldHint {}
+    cloudInit: CloudInit?
+
+    /// Clone from a VMTemplate (resolves to "node/vmid" NativeID)
     @formae.FieldHint { createOnly = true }
-    network: VirtualMachineNetwork
+    cloneFrom: (String|formae.Resolvable)? = null
+
+    /// Use full clone (true) or linked clone (false). Default: true.
+    @formae.FieldHint { createOnly = true }
+    fullClone: Boolean = true
+
+    /// Start VM after creation. Default: true.
+    @formae.FieldHint { createOnly = true }
+    start: Boolean = true
 
     /// Current VM status (computed by provider)
     @formae.FieldHint {}
@@ -361,6 +596,10 @@ class Container extends formae.Resource {
     /// Root password (write-only, never returned by Read)
     @formae.FieldHint { writeOnly = true }
     password: String?
+
+    /// Start container after creation. Default: true.
+    @formae.FieldHint { createOnly = true }
+    start: Boolean = true
 
     /// Current container status (computed by provider)
     @formae.FieldHint {}
