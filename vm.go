@@ -592,11 +592,12 @@ func (p *Plugin) pollVMStart(ctx context.Context, client *Client, req *resource.
 
 func (p *Plugin) pollVMUpdate(ctx context.Context, client *Client, req *resource.StatusRequest) (*resource.StatusResult, error) {
 	// requestID format: "vmup:<step>:<diskSize>:<upid>"
+	// steps: "stop" → "resize" → "start"
 	parts := strings.SplitN(req.RequestID, ":", 4)
 	if len(parts) < 4 {
 		return statusFailure(resource.OperationErrorCodeInternalFailure, "invalid vmup requestID"), nil
 	}
-	step := parts[1] // "stop" or "start"
+	step := parts[1] // "stop", "resize", or "start"
 	diskSize, _ := strconv.Atoi(parts[2])
 	upid := parts[3]
 
@@ -618,7 +619,7 @@ func (p *Plugin) pollVMUpdate(ctx context.Context, client *Client, req *resource
 	// Ignore stop task failure — VM might already be stopped
 	if !taskStatus.IsSuccess() && step != "stop" {
 		errMsg := taskStatus.ErrorMessage()
-		if !strings.Contains(errMsg, "already running") {
+		if !(step == "start" && strings.Contains(errMsg, "already running")) {
 			return statusFailure(resource.OperationErrorCodeInternalFailure, errMsg), nil
 		}
 	}
@@ -629,14 +630,62 @@ func (p *Plugin) pollVMUpdate(ctx context.Context, client *Client, req *resource
 	}
 
 	if step == "stop" {
-		// VM stopped — resize disk
+		// Verify VM is actually stopped before resizing
+		if getVMStatus(ctx, client, node, vmid) != "stopped" {
+			return &resource.StatusResult{
+				ProgressResult: &resource.ProgressResult{
+					Operation:       resource.OperationCheckStatus,
+					OperationStatus: resource.OperationStatusInProgress,
+					RequestID:       req.RequestID,
+					NativeID:        req.NativeID,
+					StatusMessage:   "waiting for VM to stop",
+				},
+			}, nil
+		}
+		// VM confirmed stopped — fire resize and track as async step
 		if diskSize > 0 {
-			_, _ = client.Put(ctx, fmt.Sprintf("/nodes/%s/qemu/%d/resize", node, vmid), map[string]string{
+			data, resizeErr := client.Put(ctx, fmt.Sprintf("/nodes/%s/qemu/%d/resize", node, vmid), map[string]string{
 				"disk": "scsi0",
 				"size": fmt.Sprintf("%dG", diskSize),
 			})
+			if resizeErr == nil {
+				var resizeUpid string
+				if json.Unmarshal(data, &resizeUpid) == nil && resizeUpid != "" {
+					// Resize returned a UPID — track it
+					return &resource.StatusResult{
+						ProgressResult: &resource.ProgressResult{
+							Operation:       resource.OperationCheckStatus,
+							OperationStatus: resource.OperationStatusInProgress,
+							RequestID:       fmt.Sprintf("vmup:resize:%d:%s", diskSize, resizeUpid),
+							NativeID:        req.NativeID,
+							StatusMessage:   "resizing disk",
+						},
+					}, nil
+				}
+			}
+			// No UPID (synchronous resize) — fall through to start
 		}
 		// Start VM back up
+		data, err := client.Post(ctx, fmt.Sprintf("/nodes/%s/qemu/%d/status/start", node, vmid), nil)
+		if err == nil {
+			var startUpid string
+			if json.Unmarshal(data, &startUpid) == nil {
+				return &resource.StatusResult{
+					ProgressResult: &resource.ProgressResult{
+						Operation:       resource.OperationCheckStatus,
+						OperationStatus: resource.OperationStatusInProgress,
+						RequestID:       fmt.Sprintf("vmup:start:%d:%s", diskSize, startUpid),
+						NativeID:        req.NativeID,
+						StatusMessage:   "starting VM after resize",
+					},
+				}, nil
+			}
+		}
+		// Start failed — fall through to success
+	}
+
+	if step == "resize" {
+		// Resize done — start VM back up
 		data, err := client.Post(ctx, fmt.Sprintf("/nodes/%s/qemu/%d/status/start", node, vmid), nil)
 		if err == nil {
 			var startUpid string
@@ -736,14 +785,14 @@ func parseVMConfig(node string, vmid int, configData, statusData json.RawMessage
 	if v, ok := config["description"].(string); ok {
 		props.Description = v
 	}
-	if v, ok := config["memory"].(float64); ok {
-		props.Memory = int(v)
+	if v, ok := toInt(config["memory"]); ok {
+		props.Memory = v
 	}
-	if v, ok := config["cores"].(float64); ok {
-		props.Cores = int(v)
+	if v, ok := toInt(config["cores"]); ok {
+		props.Cores = v
 	}
-	if v, ok := config["sockets"].(float64); ok {
-		props.Sockets = int(v)
+	if v, ok := toInt(config["sockets"]); ok {
+		props.Sockets = v
 	}
 	if v, ok := config["ostype"].(string); ok {
 		props.OSType = v
@@ -757,7 +806,7 @@ func parseVMConfig(node string, vmid int, configData, statusData json.RawMessage
 	if v, ok := config["machine"].(string); ok {
 		props.Machine = v
 	}
-	if v, ok := config["onboot"].(float64); ok {
+	if v, ok := toInt(config["onboot"]); ok {
 		b := v == 1
 		props.Onboot = &b
 	}
@@ -766,7 +815,7 @@ func parseVMConfig(node string, vmid int, configData, statusData json.RawMessage
 	if v, ok := config["agent"].(string); ok {
 		b := strings.HasPrefix(v, "1")
 		props.Agent = &b
-	} else if v, ok := config["agent"].(float64); ok {
+	} else if v, ok := toInt(config["agent"]); ok {
 		b := v == 1
 		props.Agent = &b
 	}
@@ -806,7 +855,7 @@ func parseVMConfig(node string, vmid int, configData, statusData json.RawMessage
 		ci.CICustom = v
 		hasCI = true
 	}
-	if v, ok := config["ciupgrade"].(float64); ok {
+	if v, ok := toInt(config["ciupgrade"]); ok {
 		b := v == 1
 		ci.CIUpgrade = &b
 		hasCI = true
@@ -894,7 +943,9 @@ func applyCloudInitParams(params map[string]string, ci *CloudInitProperties) {
 		params["cipassword"] = ci.CIPassword
 	}
 	if ci.SSHKeys != "" {
-		params["sshkeys"] = url.PathEscape(ci.SSHKeys)
+		// Proxmox requires sshkeys to be percent-encoded (spaces as %20, not +).
+		// QueryEscape encodes all special chars but uses + for spaces, so replace.
+		params["sshkeys"] = strings.ReplaceAll(url.QueryEscape(ci.SSHKeys), "+", "%20")
 	}
 	if ci.IPConfig0 != "" {
 		params["ipconfig0"] = ci.IPConfig0

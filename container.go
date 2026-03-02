@@ -421,20 +421,20 @@ func parseContainerConfig(node string, vmid int, configData, statusData json.Raw
 	if v, ok := config["description"].(string); ok {
 		props.Description = v
 	}
-	if v, ok := config["memory"].(float64); ok {
-		props.Memory = int(v)
+	if v, ok := toInt(config["memory"]); ok {
+		props.Memory = v
 	}
-	if v, ok := config["swap"].(float64); ok {
-		props.Swap = int(v)
+	if v, ok := toInt(config["swap"]); ok {
+		props.Swap = v
 	}
-	if v, ok := config["cores"].(float64); ok {
-		props.Cores = int(v)
+	if v, ok := toInt(config["cores"]); ok {
+		props.Cores = v
 	}
-	if v, ok := config["unprivileged"].(float64); ok {
+	if v, ok := toInt(config["unprivileged"]); ok {
 		b := v == 1
 		props.Unprivileged = &b
 	}
-	if v, ok := config["onboot"].(float64); ok {
+	if v, ok := toInt(config["onboot"]); ok {
 		b := v == 1
 		props.Onboot = &b
 	}

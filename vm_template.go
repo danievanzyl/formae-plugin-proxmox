@@ -769,14 +769,14 @@ func parseVMTemplateConfig(node string, vmid int, configData, statusData json.Ra
 	if v, ok := config["description"].(string); ok {
 		props.Description = v
 	}
-	if v, ok := config["memory"].(float64); ok {
-		props.Memory = int(v)
+	if v, ok := toInt(config["memory"]); ok {
+		props.Memory = v
 	}
-	if v, ok := config["cores"].(float64); ok {
-		props.Cores = int(v)
+	if v, ok := toInt(config["cores"]); ok {
+		props.Cores = v
 	}
-	if v, ok := config["sockets"].(float64); ok {
-		props.Sockets = int(v)
+	if v, ok := toInt(config["sockets"]); ok {
+		props.Sockets = v
 	}
 	if v, ok := config["ostype"].(string); ok {
 		props.OSType = v
@@ -790,7 +790,7 @@ func parseVMTemplateConfig(node string, vmid int, configData, statusData json.Ra
 	if v, ok := config["machine"].(string); ok {
 		props.Machine = v
 	}
-	if v, ok := config["onboot"].(float64); ok {
+	if v, ok := toInt(config["onboot"]); ok {
 		b := v == 1
 		props.Onboot = &b
 	}
@@ -799,7 +799,7 @@ func parseVMTemplateConfig(node string, vmid int, configData, statusData json.Ra
 	if v, ok := config["agent"].(string); ok {
 		b := strings.HasPrefix(v, "1")
 		props.Agent = &b
-	} else if v, ok := config["agent"].(float64); ok {
+	} else if v, ok := toInt(config["agent"]); ok {
 		b := v == 1
 		props.Agent = &b
 	}
@@ -847,7 +847,7 @@ func parseVMTemplateConfig(node string, vmid int, configData, statusData json.Ra
 		ci.CICustom = v
 		hasCI = true
 	}
-	if v, ok := config["ciupgrade"].(float64); ok {
+	if v, ok := toInt(config["ciupgrade"]); ok {
 		b := v == 1
 		ci.CIUpgrade = &b
 		hasCI = true
