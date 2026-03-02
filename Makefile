@@ -8,9 +8,9 @@
 #   install - Build and install plugin locally (binary + schema + manifest)
 
 # Plugin metadata - extracted from formae-plugin.pkl
-PLUGIN_NAME := $(shell pkl eval -x 'name' formae-plugin.pkl 2>/dev/null || echo "example")
-PLUGIN_VERSION := $(shell pkl eval -x 'version' formae-plugin.pkl 2>/dev/null || echo "0.0.0")
-PLUGIN_NAMESPACE := $(shell pkl eval -x 'namespace' formae-plugin.pkl 2>/dev/null || echo "EXAMPLE")
+PLUGIN_NAME := $(shell pkl eval --no-project -x 'name' formae-plugin.pkl 2>/dev/null || echo "example")
+PLUGIN_VERSION := $(shell pkl eval --no-project -x 'version' formae-plugin.pkl 2>/dev/null || echo "0.0.0")
+PLUGIN_NAMESPACE := $(shell pkl eval --no-project -x 'namespace' formae-plugin.pkl 2>/dev/null || echo "EXAMPLE")
 
 # Build settings
 GO := go

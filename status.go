@@ -10,6 +10,23 @@ import (
 )
 
 func (p *Plugin) pollTask(ctx context.Context, client *Client, req *resource.StatusRequest) (*resource.StatusResult, error) {
+	// Multi-step dispatch based on requestID prefix
+	if strings.HasPrefix(req.RequestID, "vmtpl:") {
+		return p.pollVMTemplateTask(ctx, client, req)
+	}
+	if strings.HasPrefix(req.RequestID, "clone:") {
+		return p.pollCloneTask(ctx, client, req)
+	}
+	if strings.HasPrefix(req.RequestID, "vm:") {
+		return p.pollVMStart(ctx, client, req)
+	}
+	if strings.HasPrefix(req.RequestID, "ct:") {
+		return p.pollCTStart(ctx, client, req)
+	}
+	if strings.HasPrefix(req.RequestID, "vmup:") {
+		return p.pollVMUpdate(ctx, client, req)
+	}
+
 	taskStatus, err := client.GetTaskStatus(ctx, req.RequestID)
 	if err != nil {
 		return statusFailure(resource.OperationErrorCodeNetworkFailure, fmt.Sprintf("polling task: %v", err)), nil

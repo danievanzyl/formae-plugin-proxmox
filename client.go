@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,6 +18,7 @@ type Client struct {
 	baseURL    string
 	apiToken   string
 	httpClient *http.Client
+	startID    int
 }
 
 // apiResponse is the standard Proxmox API response envelope.
@@ -91,22 +93,19 @@ func (c *Client) Put(ctx context.Context, path string, params map[string]string)
 	return c.do(req)
 }
 
-// Delete performs a DELETE request, returns the data field.
+// Delete performs a DELETE request with params as query string, returns the data field.
 func (c *Client) Delete(ctx context.Context, path string, params map[string]string) (json.RawMessage, error) {
-	form := url.Values{}
-	for k, v := range params {
-		form.Set(k, v)
-	}
-	var body io.Reader
+	u := c.apiURL(path)
 	if len(params) > 0 {
-		body = strings.NewReader(form.Encode())
+		q := url.Values{}
+		for k, v := range params {
+			q.Set(k, v)
+		}
+		u += "?" + q.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.apiURL(path), body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
 	if err != nil {
 		return nil, err
-	}
-	if len(params) > 0 {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	return c.do(req)
 }
@@ -143,4 +142,46 @@ func (c *Client) do(req *http.Request) (json.RawMessage, error) {
 	}
 
 	return apiResp.Data, nil
+}
+
+// getNextID returns the next available VMID, respecting the configured startID.
+func (c *Client) getNextID(ctx context.Context) (int, error) {
+	if c.startID <= 0 {
+		// No minimum — use Proxmox default
+		data, err := c.Get(ctx, "/cluster/nextid")
+		if err != nil {
+			return 0, err
+		}
+		var idStr string
+		if err := json.Unmarshal(data, &idStr); err != nil {
+			return 0, fmt.Errorf("parsing nextid: %w", err)
+		}
+		return strconv.Atoi(idStr)
+	}
+
+	// Get all existing VMIDs from the cluster
+	data, err := c.Get(ctx, "/cluster/resources?type=vm")
+	if err != nil {
+		return 0, fmt.Errorf("listing cluster resources: %w", err)
+	}
+
+	var resources []struct {
+		VMID int `json:"vmid"`
+	}
+	if err := json.Unmarshal(data, &resources); err != nil {
+		return 0, fmt.Errorf("parsing cluster resources: %w", err)
+	}
+
+	used := make(map[int]bool, len(resources))
+	for _, r := range resources {
+		used[r.VMID] = true
+	}
+
+	for id := c.startID; id < 1000000000; id++ {
+		if !used[id] {
+			return id, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no free VMID >= %d", c.startID)
 }

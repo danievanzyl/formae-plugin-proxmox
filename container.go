@@ -48,9 +48,24 @@ func (p *Plugin) createContainer(ctx context.Context, client *Client, req *resou
 		return createFailure(resource.OperationErrorCodeInvalidRequest, "node is required"), nil
 	}
 
+	// Check if a container with the same hostname already exists on this node.
+	if props.Hostname != "" {
+		if existing := p.findContainerByHostname(ctx, client, node, props.Hostname); existing != nil {
+			propsJSON, _ := json.Marshal(existing)
+			return &resource.CreateResult{
+				ProgressResult: &resource.ProgressResult{
+					Operation:          resource.OperationCreate,
+					OperationStatus:    resource.OperationStatusSuccess,
+					NativeID:           existing.ID,
+					ResourceProperties: json.RawMessage(propsJSON),
+				},
+			}, nil
+		}
+	}
+
 	vmid := props.VMID
 	if vmid == 0 {
-		nextID, err := getNextID(ctx, client)
+		nextID, err := client.getNextID(ctx)
 		if err != nil {
 			return createFailure(resource.OperationErrorCodeInternalFailure, fmt.Sprintf("getting next vmid: %v", err)), nil
 		}
@@ -92,9 +107,23 @@ func (p *Plugin) createContainer(ctx context.Context, client *Client, req *resou
 	data, err := client.Post(ctx, fmt.Sprintf("/nodes/%s/lxc", node), params)
 	if err != nil {
 		if strings.Contains(err.Error(), "already exists") {
-			return createFailure(resource.OperationErrorCodeAlreadyExists, err.Error()), nil
+			// If VMID was auto-assigned, retry once with a new ID (race with concurrent creates)
+			if props.VMID == 0 {
+				retryID, retryErr := client.getNextID(ctx)
+				if retryErr == nil {
+					vmid = retryID
+					params["vmid"] = strconv.Itoa(vmid)
+					nativeID = compositeID(node, vmid)
+					data, err = client.Post(ctx, fmt.Sprintf("/nodes/%s/lxc", node), params)
+				}
+			}
+			if err != nil {
+				return createFailure(resource.OperationErrorCodeAlreadyExists, err.Error()), nil
+			}
 		}
-		return createFailure(resource.OperationErrorCodeInternalFailure, err.Error()), nil
+		if err != nil {
+			return createFailure(resource.OperationErrorCodeInternalFailure, err.Error()), nil
+		}
 	}
 
 	var upid string
@@ -102,11 +131,16 @@ func (p *Plugin) createContainer(ctx context.Context, client *Client, req *resou
 		return createFailure(resource.OperationErrorCodeInternalFailure, fmt.Sprintf("parsing UPID: %v", err)), nil
 	}
 
+	requestID := upid
+	if props.Start == nil || *props.Start {
+		requestID = "ct:create:" + upid
+	}
+
 	return &resource.CreateResult{
 		ProgressResult: &resource.ProgressResult{
 			Operation:       resource.OperationCreate,
 			OperationStatus: resource.OperationStatusInProgress,
-			RequestID:       upid,
+			RequestID:       requestID,
 			NativeID:        nativeID,
 		},
 	}, nil
@@ -255,7 +289,99 @@ func (p *Plugin) deleteContainer(ctx context.Context, client *Client, req *resou
 	}, nil
 }
 
+// --- Create→Start Status ---
+
+func (p *Plugin) pollCTStart(ctx context.Context, client *Client, req *resource.StatusRequest) (*resource.StatusResult, error) {
+	// requestID format: "ct:<step>:<upid>"
+	parts := strings.SplitN(req.RequestID, ":", 3)
+	if len(parts) < 3 {
+		return statusFailure(resource.OperationErrorCodeInternalFailure, "invalid ct requestID"), nil
+	}
+	step := parts[1] // "create" or "start"
+	upid := parts[2]
+
+	taskStatus, err := client.GetTaskStatus(ctx, upid)
+	if err != nil {
+		return statusFailure(resource.OperationErrorCodeNetworkFailure, fmt.Sprintf("polling task: %v", err)), nil
+	}
+	if taskStatus.IsRunning() {
+		return &resource.StatusResult{
+			ProgressResult: &resource.ProgressResult{
+				Operation:       resource.OperationCheckStatus,
+				OperationStatus: resource.OperationStatusInProgress,
+				RequestID:       req.RequestID,
+				NativeID:        req.NativeID,
+				StatusMessage:   fmt.Sprintf("ct %s: task running", step),
+			},
+		}, nil
+	}
+	if !taskStatus.IsSuccess() {
+		errMsg := taskStatus.ErrorMessage()
+		// "already running" during start is not an error
+		if !(step == "start" && strings.Contains(errMsg, "already running")) {
+			return statusFailure(resource.OperationErrorCodeInternalFailure, errMsg), nil
+		}
+	} else if step == "create" {
+		node, vmid, err := parseCompositeID(req.NativeID)
+		if err != nil {
+			return statusFailure(resource.OperationErrorCodeInternalFailure, err.Error()), nil
+		}
+		// Only start if not already running (idempotent on re-poll)
+		if getCTStatus(ctx, client, node, vmid) != "running" {
+			data, err := client.Post(ctx, fmt.Sprintf("/nodes/%s/lxc/%d/status/start", node, vmid), nil)
+			if err == nil {
+				var startUpid string
+				if json.Unmarshal(data, &startUpid) == nil {
+					return &resource.StatusResult{
+						ProgressResult: &resource.ProgressResult{
+							Operation:       resource.OperationCheckStatus,
+							OperationStatus: resource.OperationStatusInProgress,
+							RequestID:       "ct:start:" + startUpid,
+							NativeID:        req.NativeID,
+							StatusMessage:   "starting container",
+						},
+					}, nil
+				}
+			}
+		}
+		// Already running or start failed — fall through to success
+	}
+
+	// step == "start" done, or start failed gracefully
+	readResult, _ := p.Read(ctx, &resource.ReadRequest{
+		NativeID:     req.NativeID,
+		ResourceType: req.ResourceType,
+		TargetConfig: req.TargetConfig,
+	})
+	var resourceProps json.RawMessage
+	if readResult != nil && readResult.Properties != "" {
+		resourceProps = json.RawMessage(readResult.Properties)
+	}
+	return &resource.StatusResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:          resource.OperationCheckStatus,
+			OperationStatus:    resource.OperationStatusSuccess,
+			NativeID:           req.NativeID,
+			ResourceProperties: resourceProps,
+		},
+	}, nil
+}
+
 // --- Helpers ---
+
+// getCTStatus returns the current status of a container ("running", "stopped", etc.).
+func getCTStatus(ctx context.Context, client *Client, node string, vmid int) string {
+	data, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/lxc/%d/status/current", node, vmid))
+	if err != nil {
+		return ""
+	}
+	var statusMap map[string]interface{}
+	if json.Unmarshal(data, &statusMap) != nil {
+		return ""
+	}
+	status, _ := statusMap["status"].(string)
+	return status
+}
 
 func buildContainerNetSpec(n *ContainerNetProperties) string {
 	spec := "name=" + n.Name + ",bridge=" + n.Bridge + ",ip=" + n.IP
@@ -348,6 +474,37 @@ func parseContainerRootfs(spec string) *ContainerRootfsProperties {
 		}
 	}
 	return r
+}
+
+// findContainerByHostname scans existing containers on a node for a matching hostname.
+func (p *Plugin) findContainerByHostname(ctx context.Context, client *Client, node, hostname string) *ContainerProperties {
+	data, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/lxc", node))
+	if err != nil {
+		return nil
+	}
+	var cts []proxmoxCTListEntry
+	if err := json.Unmarshal(data, &cts); err != nil {
+		return nil
+	}
+	for _, ct := range cts {
+		configData, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/lxc/%d/config", node, ct.VMID))
+		if err != nil {
+			continue
+		}
+		var config map[string]interface{}
+		if err := json.Unmarshal(configData, &config); err != nil {
+			continue
+		}
+		if h, ok := config["hostname"].(string); ok && h == hostname {
+			statusData, _ := client.Get(ctx, fmt.Sprintf("/nodes/%s/lxc/%d/status/current", node, ct.VMID))
+			props, err := parseContainerConfig(node, ct.VMID, configData, statusData)
+			if err != nil {
+				continue
+			}
+			return props
+		}
+	}
+	return nil
 }
 
 func parseContainerNet(spec string) *ContainerNetProperties {

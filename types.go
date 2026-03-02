@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -14,33 +15,58 @@ func compositeID(node string, vmid int) string {
 
 // parseCompositeID splits a NativeID "node/vmid" into parts.
 func parseCompositeID(nativeID string) (node string, vmid int, err error) {
-	_, err = fmt.Sscanf(nativeID, "%[^/]/%d", &node, &vmid)
+	parts := strings.SplitN(nativeID, "/", 2)
+	if len(parts) != 2 {
+		return "", 0, fmt.Errorf("invalid native ID %q: expected node/vmid", nativeID)
+	}
+	node = parts[0]
+	vmid, err = strconv.Atoi(parts[1])
 	if err != nil {
 		return "", 0, fmt.Errorf("invalid native ID %q: expected node/vmid", nativeID)
 	}
 	return node, vmid, nil
 }
 
+// --- CloudInit types ---
+
+// CloudInitProperties maps to CloudInit sub-resource.
+type CloudInitProperties struct {
+	CIUser       string `json:"ciuser,omitempty"`
+	CIPassword   string `json:"cipassword,omitempty"`
+	SSHKeys      string `json:"sshkeys,omitempty"`
+	IPConfig0    string `json:"ipconfig0,omitempty"`
+	Nameserver   string `json:"nameserver,omitempty"`
+	Searchdomain string `json:"searchdomain,omitempty"`
+	CIType       string `json:"citype,omitempty"`
+	CICustom     string `json:"cicustom,omitempty"`
+	CIUpgrade    *bool  `json:"ciupgrade,omitempty"`
+}
+
 // --- VM types ---
 
 // VMProperties is the formae-facing properties struct for VirtualMachine.
 type VMProperties struct {
-	ID          string             `json:"id"`
-	Node        interface{}        `json:"node"`
-	VMID        int                `json:"vmid"`
-	Name        string             `json:"name"`
-	Description string             `json:"description,omitempty"`
-	Memory      int                `json:"memory"`
-	Cores       int                `json:"cores"`
-	Sockets     int                `json:"sockets"`
-	OSType      string             `json:"ostype"`
-	ScsiHW      string             `json:"scsihw"`
-	Bios        string             `json:"bios,omitempty"`
-	Machine     string             `json:"machine,omitempty"`
-	Onboot      *bool              `json:"onboot,omitempty"`
-	Disk        *DiskProperties    `json:"disk"`
-	Network     *NetworkProperties `json:"network"`
-	Status      string             `json:"status,omitempty"`
+	ID          string               `json:"id"`
+	Node        interface{}          `json:"node"`
+	VMID        int                  `json:"vmid"`
+	Name        string               `json:"name"`
+	Description string               `json:"description,omitempty"`
+	Memory      int                  `json:"memory"`
+	Cores       int                  `json:"cores"`
+	Sockets     int                  `json:"sockets"`
+	OSType      string               `json:"ostype"`
+	ScsiHW      string               `json:"scsihw"`
+	Bios        string               `json:"bios,omitempty"`
+	Machine     string               `json:"machine,omitempty"`
+	Onboot      *bool                `json:"onboot,omitempty"`
+	Agent       *bool                `json:"agent,omitempty"`
+	Disk        *DiskProperties      `json:"disk,omitempty"`
+	Network     *NetworkProperties   `json:"network,omitempty"`
+	CloudInit   *CloudInitProperties `json:"cloudInit,omitempty"`
+	CloneFrom   interface{}          `json:"cloneFrom,omitempty"`
+	FullClone   *bool                `json:"fullClone,omitempty"`
+	Start       *bool                `json:"start,omitempty"`
+	Status      string               `json:"status,omitempty"`
 }
 
 // DiskProperties maps to VirtualMachineDisk sub-resource.
@@ -57,6 +83,63 @@ type NetworkProperties struct {
 	Bridge   string `json:"bridge"`
 	Firewall *bool  `json:"firewall,omitempty"`
 	Tag      *int   `json:"tag,omitempty"`
+}
+
+// --- VM Template types ---
+
+// VMTemplateProperties is the formae-facing properties struct for VMTemplate.
+type VMTemplateProperties struct {
+	ID          string               `json:"id"`
+	Node        interface{}          `json:"node"`
+	VMID        int                  `json:"vmid"`
+	Name        string               `json:"name"`
+	Description string               `json:"description,omitempty"`
+	CloudImage  interface{}          `json:"cloudImage,omitempty"`
+	Memory      int                  `json:"memory"`
+	Cores       int                  `json:"cores"`
+	Sockets     int                  `json:"sockets"`
+	OSType      string               `json:"ostype"`
+	ScsiHW      string               `json:"scsihw"`
+	Bios        string               `json:"bios,omitempty"`
+	Machine     string               `json:"machine,omitempty"`
+	Agent       *bool                `json:"agent,omitempty"`
+	Onboot      *bool                `json:"onboot,omitempty"`
+	Disk        *VMTemplateDiskProps  `json:"disk"`
+	Network     *NetworkProperties   `json:"network"`
+	CloudInit   *CloudInitProperties `json:"cloudInit,omitempty"`
+	Status      string               `json:"status,omitempty"`
+}
+
+// VMTemplateDiskProps maps to VMTemplateDisk sub-resource.
+type VMTemplateDiskProps struct {
+	Storage interface{} `json:"storage"`
+	Size    int         `json:"size,omitempty"`
+	Cache   string      `json:"cache,omitempty"`
+	Discard *bool       `json:"discard,omitempty"`
+}
+
+// vmTemplateStepConfig holds data needed between multi-step operations.
+// Serialized to JSON and base64-encoded in the requestID.
+type vmTemplateStepConfig struct {
+	CloudImageVolid string               `json:"civ"`
+	DiskStorage     string               `json:"ds"`
+	DiskSize        int                  `json:"dsz,omitempty"`
+	DiskCache       string               `json:"dc,omitempty"`
+	DiskDiscard     bool                 `json:"dd,omitempty"`
+	Agent           bool                 `json:"ag,omitempty"`
+	CloudInit       *CloudInitProperties `json:"ci,omitempty"`
+}
+
+// cloneStepConfig holds post-clone config data encoded in requestID.
+type cloneStepConfig struct {
+	Memory    int                  `json:"mem,omitempty"`
+	Cores     int                  `json:"cor,omitempty"`
+	Sockets   int                  `json:"soc,omitempty"`
+	Onboot    *bool                `json:"ob,omitempty"`
+	Agent     *bool                `json:"ag,omitempty"`
+	DiskSize  int                  `json:"dsz,omitempty"`
+	CloudInit *CloudInitProperties `json:"ci,omitempty"`
+	Start     bool                 `json:"st,omitempty"`
 }
 
 // --- Container types ---
@@ -77,6 +160,7 @@ type ContainerProperties struct {
 	Rootfs       *ContainerRootfsProperties `json:"rootfs"`
 	Network      *ContainerNetProperties    `json:"network"`
 	Password     string                     `json:"password,omitempty"`
+	Start        *bool                      `json:"start,omitempty"`
 	Status       string                     `json:"status,omitempty"`
 }
 
@@ -94,6 +178,42 @@ type ContainerNetProperties struct {
 	Gateway  string `json:"gw,omitempty"`
 	Firewall *bool  `json:"firewall,omitempty"`
 	Tag      *int   `json:"tag,omitempty"`
+}
+
+// --- Cloud Image types ---
+
+// CloudImageProperties is the formae-facing properties struct for CloudImage.
+type CloudImageProperties struct {
+	ID                string      `json:"id"`
+	Node              interface{} `json:"node"`
+	Storage           interface{} `json:"storage"`
+	URL               string      `json:"url,omitempty"`
+	Filename          string      `json:"filename"`
+	Checksum          string      `json:"checksum,omitempty"`
+	ChecksumAlgorithm string      `json:"checksumAlgorithm,omitempty"`
+	Volid             string      `json:"volid,omitempty"`
+	Size              int64       `json:"size,omitempty"`
+}
+
+// cloudImageNativeID builds a NativeID: "node/storage:import/filename"
+func cloudImageNativeID(node, storage, filename string) string {
+	return node + "/" + storage + ":import/" + filename
+}
+
+// parseCloudImageNativeID splits "node/storage:import/filename" into parts.
+func parseCloudImageNativeID(nativeID string) (node, volid, storage string, err error) {
+	idx := strings.Index(nativeID, "/")
+	if idx < 0 {
+		return "", "", "", fmt.Errorf("invalid cloud image ID %q", nativeID)
+	}
+	node = nativeID[:idx]
+	volid = nativeID[idx+1:]
+	colonIdx := strings.Index(volid, ":")
+	if colonIdx < 0 {
+		return "", "", "", fmt.Errorf("invalid volid in cloud image ID %q", nativeID)
+	}
+	storage = volid[:colonIdx]
+	return node, volid, storage, nil
 }
 
 // --- Node types ---
@@ -184,9 +304,10 @@ func parseTemplateNativeID(nativeID string) (node, volid, storage string, err er
 
 // proxmoxVMListEntry represents a VM in the GET /nodes/{node}/qemu response.
 type proxmoxVMListEntry struct {
-	VMID   int    `json:"vmid"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	VMID     int    `json:"vmid"`
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	Template int    `json:"template"` // 0=VM, 1=template
 }
 
 // proxmoxCTListEntry represents a container in the GET /nodes/{node}/lxc response.
