@@ -330,3 +330,17 @@ func resolveString(v interface{}) string {
 	}
 	return ""
 }
+
+// toInt extracts an int from a value that may be float64 (JSON number) or string.
+// Proxmox API returns numeric config values as strings in some cases.
+func toInt(v interface{}) (int, bool) {
+	switch val := v.(type) {
+	case float64:
+		return int(val), true
+	case string:
+		if i, err := strconv.Atoi(val); err == nil {
+			return i, true
+		}
+	}
+	return 0, false
+}
