@@ -11,9 +11,9 @@ import (
 )
 
 func (p *Plugin) listTemplates(ctx context.Context, client *Client, req *resource.ListRequest) (*resource.ListResult, error) {
-	node, ok := req.AdditionalProperties["node"]
-	if !ok || node == "" {
-		return &resource.ListResult{NativeIDs: []string{}}, nil
+	nodes := []string{req.AdditionalProperties["node"]}
+	if nodes[0] == "" {
+		nodes = allNodeNames(ctx, client)
 	}
 
 	// Get all storages, filter those supporting vztmpl content.
@@ -28,20 +28,22 @@ func (p *Plugin) listTemplates(ctx context.Context, client *Client, req *resourc
 	}
 
 	var ids []string
-	for _, s := range storages {
-		if !strings.Contains(s.Content, "vztmpl") {
-			continue
-		}
-		contentData, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/storage/%s/content?content=vztmpl", node, s.Storage))
-		if err != nil {
-			continue
-		}
-		var entries []proxmoxStorageContentEntry
-		if err := json.Unmarshal(contentData, &entries); err != nil {
-			continue
-		}
-		for _, e := range entries {
-			ids = append(ids, templateNativeID(node, e.Volid))
+	for _, node := range nodes {
+		for _, s := range storages {
+			if !strings.Contains(s.Content, "vztmpl") {
+				continue
+			}
+			contentData, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/storage/%s/content?content=vztmpl", node, s.Storage))
+			if err != nil {
+				continue
+			}
+			var entries []proxmoxStorageContentEntry
+			if err := json.Unmarshal(contentData, &entries); err != nil {
+				continue
+			}
+			for _, e := range entries {
+				ids = append(ids, templateNativeID(node, e.Volid))
+			}
 		}
 	}
 
@@ -83,8 +85,6 @@ func (p *Plugin) readTemplate(ctx context.Context, client *Client, req *resource
 
 			props := TemplateProperties{
 				ID:       req.NativeID,
-				Node:     node,
-				Storage:  storage,
 				Template: templateName,
 				Volid:    volid,
 				Size:     e.Size,

@@ -13,24 +13,24 @@ import (
 // --- List ---
 
 func (p *Plugin) listContainers(ctx context.Context, client *Client, req *resource.ListRequest) (*resource.ListResult, error) {
-	node, ok := req.AdditionalProperties["node"]
-	if !ok || node == "" {
-		return &resource.ListResult{NativeIDs: []string{}}, nil
+	nodes := []string{req.AdditionalProperties["node"]}
+	if nodes[0] == "" {
+		nodes = allNodeNames(ctx, client)
 	}
 
-	data, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/lxc", node))
-	if err != nil {
-		return &resource.ListResult{NativeIDs: []string{}}, nil
-	}
-
-	var cts []proxmoxCTListEntry
-	if err := json.Unmarshal(data, &cts); err != nil {
-		return &resource.ListResult{NativeIDs: []string{}}, nil
-	}
-
-	ids := make([]string, 0, len(cts))
-	for _, ct := range cts {
-		ids = append(ids, compositeID(node, ct.VMID))
+	var ids []string
+	for _, node := range nodes {
+		data, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/lxc", node))
+		if err != nil {
+			continue
+		}
+		var cts []proxmoxCTListEntry
+		if err := json.Unmarshal(data, &cts); err != nil {
+			continue
+		}
+		for _, ct := range cts {
+			ids = append(ids, compositeID(node, ct.VMID))
+		}
 	}
 	return &resource.ListResult{NativeIDs: ids}, nil
 }
@@ -411,7 +411,6 @@ func parseContainerConfig(node string, vmid int, configData, statusData json.Raw
 
 	props := &ContainerProperties{
 		ID:   compositeID(node, vmid),
-		Node: node,
 		VMID: vmid,
 	}
 
@@ -461,9 +460,7 @@ func parseContainerRootfs(spec string) *ContainerRootfsProperties {
 		return r
 	}
 	volParts := strings.SplitN(parts[0], ":", 2)
-	if len(volParts) >= 1 {
-		r.Storage = volParts[0]
-	}
+	_ = volParts // storage extracted from volume spec but omitted from Read
 	for _, part := range parts[1:] {
 		kv := strings.SplitN(part, "=", 2)
 		if len(kv) == 2 && kv[0] == "size" {

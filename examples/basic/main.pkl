@@ -53,6 +53,8 @@ forma {
     cloudInit = new proxmox.CloudInit {
       ciuser = "ubuntu"
       ipconfig0 = "ip=dhcp"
+      sshkeys = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKxSnMuuZZIJi8mN6KRitYzNSply0+c3qmWvjlnoVxZR danie@mac"
+      cicustom = "vendor=local:snippets/vendor.yaml"
     }
     target = myProxmox.res
     stack = myStack.res

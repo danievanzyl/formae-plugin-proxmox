@@ -17,6 +17,9 @@ func (p *Plugin) pollTask(ctx context.Context, client *Client, req *resource.Sta
 	if strings.HasPrefix(req.RequestID, "clone:") {
 		return p.pollCloneTask(ctx, client, req)
 	}
+	if strings.HasPrefix(req.RequestID, "vmci:") {
+		return p.pollVMCreateCI(ctx, client, req)
+	}
 	if strings.HasPrefix(req.RequestID, "vm:") {
 		return p.pollVMStart(ctx, client, req)
 	}
