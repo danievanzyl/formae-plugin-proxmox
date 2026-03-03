@@ -198,7 +198,7 @@ class CloudInit extends formae.SubResource {
     cipassword: String?
 
     /// SSH public keys (one per line, OpenSSH format)
-    @formae.FieldHint { writeOnly = true }
+    @formae.FieldHint {}
     sshkeys: String?
 
     /// IP configuration for first interface (e.g. "ip=dhcp" or "ip=x.x.x.x/24,gw=y.y.y.y")

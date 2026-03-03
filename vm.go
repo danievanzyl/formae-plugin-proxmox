@@ -967,6 +967,15 @@ func parseVMConfig(node string, vmid int, configData, statusData json.RawMessage
 		ci.CIUser = v
 		hasCI = true
 	}
+	if v, ok := config["sshkeys"].(string); ok && v != "" {
+		decoded, err := url.QueryUnescape(v)
+		if err == nil {
+			ci.SSHKeys = decoded
+		} else {
+			ci.SSHKeys = v
+		}
+		hasCI = true
+	}
 	if v, ok := config["ipconfig0"].(string); ok && v != "" {
 		ci.IPConfig0 = v
 		hasCI = true
