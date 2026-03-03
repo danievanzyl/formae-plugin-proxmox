@@ -4,5 +4,5 @@ dependencies {
   ["formae"] {
     uri = "package://hub.platform.engineering/plugins/pkl/schema/pkl/formae/formae@0.82.2"
   }
-  ["proxmox"] = import("/Users/danievanzyl/.pel/formae/plugins/proxmox/v0.1.0/schema/pkl/PklProject")
+  ["proxmox"] = import("./schema/pkl/PklProject")
 }
