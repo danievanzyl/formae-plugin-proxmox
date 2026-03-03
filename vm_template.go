@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -901,6 +902,15 @@ func parseVMTemplateConfig(node string, vmid int, configData, statusData json.Ra
 	hasCI := false
 	if v, ok := config["ciuser"].(string); ok && v != "" {
 		ci.CIUser = v
+		hasCI = true
+	}
+	if v, ok := config["sshkeys"].(string); ok && v != "" {
+		decoded, err := url.QueryUnescape(v)
+		if err == nil {
+			ci.SSHKeys = decoded
+		} else {
+			ci.SSHKeys = v
+		}
 		hasCI = true
 	}
 	if v, ok := config["ipconfig0"].(string); ok && v != "" {
