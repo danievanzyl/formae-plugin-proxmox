@@ -147,6 +147,9 @@ func (p *Plugin) createVMTemplate(ctx context.Context, client *Client, req *reso
 	if props.Machine != "" {
 		params["machine"] = props.Machine
 	}
+	if props.CPU != "" {
+		params["cpu"] = props.CPU
+	}
 	if props.Onboot != nil && *props.Onboot {
 		params["onboot"] = "1"
 	}
@@ -247,9 +250,9 @@ func (p *Plugin) updateVMTemplate(ctx context.Context, client *Client, req *reso
 	}
 	if desired.Agent != nil {
 		if *desired.Agent {
-			params["agent"] = "1"
+			params["agent"] = "enabled=1"
 		} else {
-			params["agent"] = "0"
+			params["agent"] = "enabled=0"
 		}
 	}
 	if desired.CloudInit != nil {
@@ -470,7 +473,7 @@ func (p *Plugin) pollVMTemplateTask(ctx context.Context, client *Client, req *re
 		configParams["serial0"] = "socket"
 		configParams["vga"] = "serial0"
 		if stepCfg.Agent {
-			configParams["agent"] = "1"
+			configParams["agent"] = "enabled=1"
 		}
 		// Cloud-init params are applied separately after import completes,
 		// together with ide2 — Proxmox's async POST auto-allocates a cloudinit
@@ -565,7 +568,30 @@ func (p *Plugin) pollCloneTask(ctx context.Context, client *Client, req *resourc
 
 	node, vmid, _ := parseCompositeID(req.NativeID)
 
-	// Apply sizing + cloud-init overrides
+	// Read current config for lock check and disk size comparison.
+	existingConfig, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid))
+	var cfgMap map[string]interface{}
+	if err == nil {
+		json.Unmarshal(existingConfig, &cfgMap)
+	}
+
+	// Wait if VM is locked (previous config/resize still running).
+	if cfgMap != nil {
+		lockVal, hasLock := cfgMap["lock"]
+		if hasLock && lockVal != nil && lockVal != "" {
+			return &resource.StatusResult{
+				ProgressResult: &resource.ProgressResult{
+					Operation:       resource.OperationCheckStatus,
+					OperationStatus: resource.OperationStatusInProgress,
+					RequestID:       req.RequestID,
+					NativeID:        req.NativeID,
+					StatusMessage:   fmt.Sprintf("post-clone: VM locked (%v)", lockVal),
+				},
+			}, nil
+		}
+	}
+
+	// Apply sizing + cloud-init overrides (idempotent — PUT overwrites)
 	configParams := map[string]string{}
 	if stepCfg.Memory > 0 {
 		configParams["memory"] = strconv.Itoa(stepCfg.Memory)
@@ -585,9 +611,9 @@ func (p *Plugin) pollCloneTask(ctx context.Context, client *Client, req *resourc
 	}
 	if stepCfg.Agent != nil {
 		if *stepCfg.Agent {
-			configParams["agent"] = "1"
+			configParams["agent"] = "enabled=1"
 		} else {
-			configParams["agent"] = "0"
+			configParams["agent"] = "enabled=0"
 		}
 	}
 	if stepCfg.CloudInit != nil {
@@ -598,12 +624,33 @@ func (p *Plugin) pollCloneTask(ctx context.Context, client *Client, req *resourc
 		_, _ = client.Put(ctx, fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid), configParams)
 	}
 
-	// Disk resize if requested
+	// Disk resize if requested — check current size to avoid duplicate resize.
 	if stepCfg.DiskSize > 0 {
-		_, _ = client.Put(ctx, fmt.Sprintf("/nodes/%s/qemu/%d/resize", node, vmid), map[string]string{
-			"disk": "scsi0",
-			"size": fmt.Sprintf("%dG", stepCfg.DiskSize),
-		})
+		needResize := true
+		if cfgMap != nil {
+			if scsi0, ok := cfgMap["scsi0"].(string); ok {
+				currentDisk := parseVMDiskFromConfig(scsi0)
+				if currentDisk.Size >= stepCfg.DiskSize {
+					needResize = false
+				}
+			}
+		}
+		if needResize {
+			_, _ = client.Put(ctx, fmt.Sprintf("/nodes/%s/qemu/%d/resize", node, vmid), map[string]string{
+				"disk": "scsi0",
+				"size": fmt.Sprintf("%dG", stepCfg.DiskSize),
+			})
+			// Return in-progress — next poll will start VM after resize completes.
+			return &resource.StatusResult{
+				ProgressResult: &resource.ProgressResult{
+					Operation:       resource.OperationCheckStatus,
+					OperationStatus: resource.OperationStatusInProgress,
+					RequestID:       req.RequestID,
+					NativeID:        req.NativeID,
+					StatusMessage:   "resizing disk after clone",
+				},
+			}, nil
+		}
 	}
 
 	// Start VM if requested and not already running
@@ -817,14 +864,17 @@ func parseVMTemplateConfig(node string, vmid int, configData, statusData json.Ra
 	if v, ok := config["machine"].(string); ok {
 		props.Machine = v
 	}
+	if v, ok := config["cpu"].(string); ok {
+		props.CPU = v
+	}
 	if v, ok := toInt(config["onboot"]); ok {
 		b := v == 1
 		props.Onboot = &b
 	}
 
-	// Agent
+	// Agent — Proxmox returns "1", "enabled=1", or "enabled=1,fstrim_cloned_disks=0" etc.
 	if v, ok := config["agent"].(string); ok {
-		b := strings.HasPrefix(v, "1")
+		b := v == "1" || strings.Contains(v, "enabled=1")
 		props.Agent = &b
 	} else if v, ok := toInt(config["agent"]); ok {
 		b := v == 1

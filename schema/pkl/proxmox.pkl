@@ -355,15 +355,19 @@ class VMTemplate extends formae.Resource {
 
     /// BIOS type
     @formae.FieldHint { createOnly = true }
-    bios: String?
+    bios: String = "ovmf"
 
     /// Machine type
     @formae.FieldHint { createOnly = true }
-    machine: String?
+    machine: String = "q35"
+
+    /// CPU type (host, kvm64, etc.)
+    @formae.FieldHint { createOnly = true }
+    cpu: String = "host"
 
     /// Enable QEMU guest agent
     @formae.FieldHint {}
-    agent: Boolean?
+    agent: Boolean = true
 
     /// Start on host boot
     @formae.FieldHint {}
@@ -441,11 +445,15 @@ class VirtualMachine extends formae.Resource {
 
     /// BIOS type (seabios or ovmf)
     @formae.FieldHint { createOnly = true }
-    bios: String?
+    bios: String = "ovmf"
 
     /// Machine type (q35, pc, etc.)
     @formae.FieldHint { createOnly = true }
-    machine: String?
+    machine: String = "q35"
+
+    /// CPU type (host, kvm64, etc.)
+    @formae.FieldHint { createOnly = true }
+    cpu: String = "host"
 
     /// Start VM on host boot
     @formae.FieldHint {}
@@ -453,7 +461,7 @@ class VirtualMachine extends formae.Resource {
 
     /// Enable QEMU guest agent
     @formae.FieldHint {}
-    agent: Boolean?
+    agent: Boolean = true
 
     /// Primary disk configuration (optional when cloning from template)
     @formae.FieldHint {}
