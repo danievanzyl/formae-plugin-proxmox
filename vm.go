@@ -104,6 +104,9 @@ func (p *Plugin) createVM(ctx context.Context, client *Client, req *resource.Cre
 	if props.Machine != "" {
 		params["machine"] = props.Machine
 	}
+	if props.CPU != "" {
+		params["cpu"] = props.CPU
+	}
 	if props.Onboot != nil && *props.Onboot {
 		params["onboot"] = "1"
 	}
@@ -117,7 +120,7 @@ func (p *Plugin) createVM(ctx context.Context, client *Client, req *resource.Cre
 	}
 
 	if props.Agent != nil && *props.Agent {
-		params["agent"] = "1"
+		params["agent"] = "enabled=1"
 	}
 
 	// Auto-add EFI disk for UEFI boot
@@ -264,9 +267,9 @@ func (p *Plugin) updateVM(ctx context.Context, client *Client, req *resource.Upd
 
 	if desired.Agent != nil {
 		if *desired.Agent {
-			params["agent"] = "1"
+			params["agent"] = "enabled=1"
 		} else {
-			params["agent"] = "0"
+			params["agent"] = "enabled=0"
 		}
 	}
 
@@ -932,14 +935,17 @@ func parseVMConfig(node string, vmid int, configData, statusData json.RawMessage
 	if v, ok := config["machine"].(string); ok {
 		props.Machine = v
 	}
+	if v, ok := config["cpu"].(string); ok {
+		props.CPU = v
+	}
 	if v, ok := toInt(config["onboot"]); ok {
 		b := v == 1
 		props.Onboot = &b
 	}
 
-	// Agent
+	// Agent — Proxmox returns "1", "enabled=1", or "enabled=1,fstrim_cloned_disks=0" etc.
 	if v, ok := config["agent"].(string); ok {
-		b := strings.HasPrefix(v, "1")
+		b := v == "1" || strings.Contains(v, "enabled=1")
 		props.Agent = &b
 	} else if v, ok := toInt(config["agent"]); ok {
 		b := v == 1

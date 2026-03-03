@@ -58,6 +58,7 @@ type VMProperties struct {
 	ScsiHW      string               `json:"scsihw"`
 	Bios        string               `json:"bios,omitempty"`
 	Machine     string               `json:"machine,omitempty"`
+	CPU         string               `json:"cpu,omitempty"`
 	Onboot      *bool                `json:"onboot,omitempty"`
 	Agent       *bool                `json:"agent,omitempty"`
 	Disk        *DiskProperties      `json:"disk,omitempty"`
@@ -102,6 +103,7 @@ type VMTemplateProperties struct {
 	ScsiHW      string               `json:"scsihw"`
 	Bios        string               `json:"bios,omitempty"`
 	Machine     string               `json:"machine,omitempty"`
+	CPU         string               `json:"cpu,omitempty"`
 	Agent       *bool                `json:"agent,omitempty"`
 	Onboot      *bool                `json:"onboot,omitempty"`
 	Disk        *VMTemplateDiskProps  `json:"disk"`
