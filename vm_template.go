@@ -15,27 +15,27 @@ import (
 // --- List ---
 
 func (p *Plugin) listVMTemplates(ctx context.Context, client *Client, req *resource.ListRequest) (*resource.ListResult, error) {
-	node, ok := req.AdditionalProperties["node"]
-	if !ok || node == "" {
-		return &resource.ListResult{NativeIDs: []string{}}, nil
+	nodes := []string{req.AdditionalProperties["node"]}
+	if nodes[0] == "" {
+		nodes = allNodeNames(ctx, client)
 	}
 
-	data, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/qemu", node))
-	if err != nil {
-		return &resource.ListResult{NativeIDs: []string{}}, nil
-	}
-
-	var vms []proxmoxVMListEntry
-	if err := json.Unmarshal(data, &vms); err != nil {
-		return &resource.ListResult{NativeIDs: []string{}}, nil
-	}
-
-	ids := make([]string, 0)
-	for _, vm := range vms {
-		if vm.Template != 1 {
-			continue // only include templates
+	var ids []string
+	for _, node := range nodes {
+		data, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/qemu", node))
+		if err != nil {
+			continue
 		}
-		ids = append(ids, compositeID(node, vm.VMID))
+		var vms []proxmoxVMListEntry
+		if err := json.Unmarshal(data, &vms); err != nil {
+			continue
+		}
+		for _, vm := range vms {
+			if vm.Template != 1 {
+				continue
+			}
+			ids = append(ids, compositeID(node, vm.VMID))
+		}
 	}
 	return &resource.ListResult{NativeIDs: ids}, nil
 }
@@ -407,7 +407,33 @@ func (p *Plugin) pollVMTemplateTask(ctx context.Context, client *Client, req *re
 		}
 
 		if hasScsi0 {
-			// Disk imported. Proceed to resize + template conversion.
+			// Disk imported. Apply ide2 + cloud-init params if not already done.
+			if _, hasIDE2 := cfgMap["ide2"]; !hasIDE2 {
+				ciParams := map[string]string{
+					"ide2": stepCfg.DiskStorage + ":cloudinit",
+				}
+				if stepCfg.CloudInit != nil {
+					applyCloudInitParams(ciParams, stepCfg.CloudInit)
+				}
+				// Use short timeout — the PUT may block while creating the cloudinit
+				// LV. The lock-check loop will wait for completion on next poll.
+				ciCtx, ciCancel := context.WithTimeout(ctx, 5*time.Second)
+				defer ciCancel()
+				_, _ = client.Put(ciCtx, fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid), ciParams)
+				// Return in-progress — the PUT may lock the VM while creating
+				// the cloudinit drive. Next poll will wait for lock to clear
+				// via the hasLock check above before proceeding.
+				return &resource.StatusResult{
+					ProgressResult: &resource.ProgressResult{
+						Operation:       resource.OperationCheckStatus,
+						OperationStatus: resource.OperationStatusInProgress,
+						RequestID:       req.RequestID,
+						NativeID:        req.NativeID,
+						StatusMessage:   "applying cloud-init configuration",
+					},
+				}, nil
+			}
+			// ide2 present and no lock — proceed to resize + template conversion.
 			return p.convertToTemplate(ctx, client, req, node, vmid, &stepCfg)
 		}
 
@@ -439,15 +465,17 @@ func (p *Plugin) pollVMTemplateTask(ctx context.Context, client *Client, req *re
 			diskSpec += ",discard=on"
 		}
 		configParams["scsi0"] = diskSpec
-		configParams["ide2"] = stepCfg.DiskStorage + ":cloudinit"
+		// ide2 (cloudinit drive) is added separately after import completes
+		// to avoid LV collision killing the entire task and dropping CI params.
 		configParams["serial0"] = "socket"
 		configParams["vga"] = "serial0"
 		if stepCfg.Agent {
 			configParams["agent"] = "1"
 		}
-		if stepCfg.CloudInit != nil {
-			applyCloudInitParams(configParams, stepCfg.CloudInit)
-		}
+		// Cloud-init params are applied separately after import completes,
+		// together with ide2 — Proxmox's async POST auto-allocates a cloudinit
+		// drive when CI params are present, causing LV collision on ide2 creation.
+
 		// Auto-add EFI disk for UEFI boot
 		if bios, ok := cfgMap["bios"].(string); ok && bios == "ovmf" {
 			configParams["efidisk0"] = stepCfg.DiskStorage + ":1,efitype=4m,pre-enrolled-keys=1"
@@ -759,7 +787,6 @@ func parseVMTemplateConfig(node string, vmid int, configData, statusData json.Ra
 
 	props := &VMTemplateProperties{
 		ID:   compositeID(node, vmid),
-		Node: node,
 		VMID: vmid,
 	}
 
@@ -808,7 +835,6 @@ func parseVMTemplateConfig(node string, vmid int, configData, statusData json.Ra
 	if scsi0, ok := config["scsi0"].(string); ok {
 		disk := parseVMDiskFromConfig(scsi0)
 		props.Disk = &VMTemplateDiskProps{
-			Storage: disk.Storage,
 			Size:    disk.Size,
 			Cache:   disk.Cache,
 			Discard: disk.Discard,

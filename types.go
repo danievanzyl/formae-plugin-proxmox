@@ -47,7 +47,7 @@ type CloudInitProperties struct {
 // VMProperties is the formae-facing properties struct for VirtualMachine.
 type VMProperties struct {
 	ID          string               `json:"id"`
-	Node        interface{}          `json:"node"`
+	Node        interface{}          `json:"node,omitempty"`
 	VMID        int                  `json:"vmid"`
 	Name        string               `json:"name"`
 	Description string               `json:"description,omitempty"`
@@ -71,7 +71,7 @@ type VMProperties struct {
 
 // DiskProperties maps to VirtualMachineDisk sub-resource.
 type DiskProperties struct {
-	Storage interface{} `json:"storage"`
+	Storage interface{} `json:"storage,omitempty"`
 	Size    int    `json:"size"`
 	Cache   string `json:"cache,omitempty"`
 	Discard *bool  `json:"discard,omitempty"`
@@ -90,7 +90,7 @@ type NetworkProperties struct {
 // VMTemplateProperties is the formae-facing properties struct for VMTemplate.
 type VMTemplateProperties struct {
 	ID          string               `json:"id"`
-	Node        interface{}          `json:"node"`
+	Node        interface{}          `json:"node,omitempty"`
 	VMID        int                  `json:"vmid"`
 	Name        string               `json:"name"`
 	Description string               `json:"description,omitempty"`
@@ -112,7 +112,7 @@ type VMTemplateProperties struct {
 
 // VMTemplateDiskProps maps to VMTemplateDisk sub-resource.
 type VMTemplateDiskProps struct {
-	Storage interface{} `json:"storage"`
+	Storage interface{} `json:"storage,omitempty"`
 	Size    int         `json:"size,omitempty"`
 	Cache   string      `json:"cache,omitempty"`
 	Discard *bool       `json:"discard,omitempty"`
@@ -142,16 +142,24 @@ type cloneStepConfig struct {
 	Start     bool                 `json:"st,omitempty"`
 }
 
+// vmCreateCIConfig holds cloud-init config deferred to post-create.
+// Serialized to JSON and base64-encoded in the requestID.
+type vmCreateCIConfig struct {
+	CIStorage string               `json:"cs"`
+	CloudInit *CloudInitProperties `json:"ci"`
+	Start     bool                 `json:"st"`
+}
+
 // --- Container types ---
 
 // ContainerProperties is the formae-facing properties struct for Container.
 type ContainerProperties struct {
 	ID           string                     `json:"id"`
-	Node         interface{}                `json:"node"`
+	Node         interface{}                `json:"node,omitempty"`
 	VMID         int                        `json:"vmid"`
 	Hostname     string                     `json:"hostname"`
 	Description  string                     `json:"description,omitempty"`
-	OSTemplate   interface{}                 `json:"ostemplate"`
+	OSTemplate   interface{}                 `json:"ostemplate,omitempty"`
 	Memory       int                        `json:"memory"`
 	Swap         int                        `json:"swap"`
 	Cores        int                        `json:"cores"`
@@ -166,7 +174,7 @@ type ContainerProperties struct {
 
 // ContainerRootfsProperties maps to ContainerRootfs sub-resource.
 type ContainerRootfsProperties struct {
-	Storage interface{} `json:"storage"`
+	Storage interface{} `json:"storage,omitempty"`
 	Size    int    `json:"size"`
 }
 
@@ -185,8 +193,8 @@ type ContainerNetProperties struct {
 // CloudImageProperties is the formae-facing properties struct for CloudImage.
 type CloudImageProperties struct {
 	ID                string      `json:"id"`
-	Node              interface{} `json:"node"`
-	Storage           interface{} `json:"storage"`
+	Node              interface{} `json:"node,omitempty"`
+	Storage           interface{} `json:"storage,omitempty"`
 	URL               string      `json:"url,omitempty"`
 	Filename          string      `json:"filename"`
 	Checksum          string      `json:"checksum,omitempty"`
@@ -266,8 +274,8 @@ type proxmoxStorageListEntry struct {
 // TemplateProperties is the formae-facing properties struct for Template.
 type TemplateProperties struct {
 	ID       string      `json:"id"`
-	Node     interface{} `json:"node"`
-	Storage  interface{} `json:"storage"`
+	Node     interface{} `json:"node,omitempty"`
+	Storage  interface{} `json:"storage,omitempty"`
 	Template string      `json:"template,omitempty"`
 	Volid    string      `json:"volid"`
 	Size     int64       `json:"size,omitempty"`

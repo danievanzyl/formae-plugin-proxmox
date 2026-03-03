@@ -15,27 +15,27 @@ import (
 // --- List ---
 
 func (p *Plugin) listVMs(ctx context.Context, client *Client, req *resource.ListRequest) (*resource.ListResult, error) {
-	node, ok := req.AdditionalProperties["node"]
-	if !ok || node == "" {
-		return &resource.ListResult{NativeIDs: []string{}}, nil
+	nodes := []string{req.AdditionalProperties["node"]}
+	if nodes[0] == "" {
+		nodes = allNodeNames(ctx, client)
 	}
 
-	data, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/qemu", node))
-	if err != nil {
-		return &resource.ListResult{NativeIDs: []string{}}, nil
-	}
-
-	var vms []proxmoxVMListEntry
-	if err := json.Unmarshal(data, &vms); err != nil {
-		return &resource.ListResult{NativeIDs: []string{}}, nil
-	}
-
-	ids := make([]string, 0, len(vms))
-	for _, vm := range vms {
-		if vm.Template == 1 {
-			continue // skip templates, they have their own resource type
+	var ids []string
+	for _, node := range nodes {
+		data, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/qemu", node))
+		if err != nil {
+			continue
 		}
-		ids = append(ids, compositeID(node, vm.VMID))
+		var vms []proxmoxVMListEntry
+		if err := json.Unmarshal(data, &vms); err != nil {
+			continue
+		}
+		for _, vm := range vms {
+			if vm.Template == 1 {
+				continue
+			}
+			ids = append(ids, compositeID(node, vm.VMID))
+		}
 	}
 	return &resource.ListResult{NativeIDs: ids}, nil
 }
@@ -128,15 +128,20 @@ func (p *Plugin) createVM(ctx context.Context, client *Client, req *resource.Cre
 		}
 	}
 
+	// Cloud-init is deferred to post-create config step (ide2 LV idempotency).
+	// Boot order is safe to set now since scsi0 is in the same POST.
+	var ciConfig *vmCreateCIConfig
 	if props.CloudInit != nil {
-		// Attach cloud-init drive on ide2
+		params["boot"] = "order=scsi0"
 		ciStorage := "local-lvm"
 		if props.Disk != nil {
 			ciStorage = resolveString(props.Disk.Storage)
 		}
-		params["ide2"] = ciStorage + ":cloudinit"
-		params["boot"] = "order=scsi0"
-		applyCloudInitParams(params, props.CloudInit)
+		ciConfig = &vmCreateCIConfig{
+			CIStorage: ciStorage,
+			CloudInit: props.CloudInit,
+			Start:     props.Start == nil || *props.Start,
+		}
 	}
 
 	nativeID := compositeID(node, vmid)
@@ -168,9 +173,15 @@ func (p *Plugin) createVM(ctx context.Context, client *Client, req *resource.Cre
 		return createFailure(resource.OperationErrorCodeInternalFailure, fmt.Sprintf("parsing UPID: %v", err)), nil
 	}
 
-	requestID := upid
-	if props.Start == nil || *props.Start {
+	var requestID string
+	if ciConfig != nil {
+		cfgJSON, _ := json.Marshal(ciConfig)
+		cfgB64 := base64.StdEncoding.EncodeToString(cfgJSON)
+		requestID = fmt.Sprintf("vmci:create:%s:%s", cfgB64, upid)
+	} else if props.Start == nil || *props.Start {
 		requestID = "vm:create:" + upid
+	} else {
+		requestID = upid
 	}
 
 	return &resource.CreateResult{
@@ -588,6 +599,122 @@ func (p *Plugin) pollVMStart(ctx context.Context, client *Client, req *resource.
 	}, nil
 }
 
+// --- Create with deferred Cloud-Init Status ---
+
+// pollVMCreateCI handles VM creation with deferred cloud-init configuration.
+// requestID format: "vmci:create:<base64-config>:<upid>"
+// After VM creation succeeds, applies ide2 (if not present) + CI params via config PUT,
+// then starts the VM.
+func (p *Plugin) pollVMCreateCI(ctx context.Context, client *Client, req *resource.StatusRequest) (*resource.StatusResult, error) {
+	parts := strings.SplitN(req.RequestID, ":", 4)
+	if len(parts) < 4 {
+		return statusFailure(resource.OperationErrorCodeInternalFailure, "invalid vmci requestID"), nil
+	}
+	configB64 := parts[2]
+	upid := parts[3]
+
+	taskStatus, err := client.GetTaskStatus(ctx, upid)
+	if err != nil {
+		return statusFailure(resource.OperationErrorCodeNetworkFailure, fmt.Sprintf("polling task: %v", err)), nil
+	}
+	if taskStatus.IsRunning() {
+		return &resource.StatusResult{
+			ProgressResult: &resource.ProgressResult{
+				Operation:       resource.OperationCheckStatus,
+				OperationStatus: resource.OperationStatusInProgress,
+				RequestID:       req.RequestID,
+				NativeID:        req.NativeID,
+				StatusMessage:   "vm create: task running",
+			},
+		}, nil
+	}
+	if !taskStatus.IsSuccess() {
+		return statusFailure(resource.OperationErrorCodeInternalFailure, taskStatus.ErrorMessage()), nil
+	}
+
+	// VM created. Decode CI config and apply.
+	var ciCfg vmCreateCIConfig
+	cfgJSON, err := base64.StdEncoding.DecodeString(configB64)
+	if err != nil {
+		return statusFailure(resource.OperationErrorCodeInternalFailure, fmt.Sprintf("decoding ci config: %v", err)), nil
+	}
+	if err := json.Unmarshal(cfgJSON, &ciCfg); err != nil {
+		return statusFailure(resource.OperationErrorCodeInternalFailure, fmt.Sprintf("parsing ci config: %v", err)), nil
+	}
+
+	node, vmid, err := parseCompositeID(req.NativeID)
+	if err != nil {
+		return statusFailure(resource.OperationErrorCodeInternalFailure, err.Error()), nil
+	}
+
+	// Read current config to check if ide2 already exists.
+	configParams := map[string]string{}
+	existingConfig, err := client.Get(ctx, fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid))
+	if err == nil {
+		var cfgMap map[string]interface{}
+		if json.Unmarshal(existingConfig, &cfgMap) == nil {
+			if _, hasIDE2 := cfgMap["ide2"]; !hasIDE2 {
+				// Delete any stale cloudinit volume from a previous VM with this VMID (best effort).
+				// Use delay=30 so the API waits for the delete task to finish before returning.
+				ciVolid := fmt.Sprintf("%s:vm-%d-cloudinit", ciCfg.CIStorage, vmid)
+				_, _ = client.Delete(ctx, fmt.Sprintf("/nodes/%s/storage/%s/content/%s", node, ciCfg.CIStorage, ciVolid), map[string]string{"delay": "30"})
+				configParams["ide2"] = ciCfg.CIStorage + ":cloudinit"
+			}
+		}
+	} else {
+		// Config read failed — try setting ide2 anyway
+		ciVolid := fmt.Sprintf("%s:vm-%d-cloudinit", ciCfg.CIStorage, vmid)
+		_, _ = client.Delete(ctx, fmt.Sprintf("/nodes/%s/storage/%s/content/%s", node, ciCfg.CIStorage, ciVolid), map[string]string{"delay": "30"})
+		configParams["ide2"] = ciCfg.CIStorage + ":cloudinit"
+	}
+
+	applyCloudInitParams(configParams, ciCfg.CloudInit)
+
+	_, err = client.Put(ctx, fmt.Sprintf("/nodes/%s/qemu/%d/config", node, vmid), configParams)
+	if err != nil {
+		return statusFailure(resource.OperationErrorCodeInternalFailure, fmt.Sprintf("applying cloud-init config: %v", err)), nil
+	}
+
+	// Start VM if requested
+	if ciCfg.Start && getVMStatus(ctx, client, node, vmid) != "running" {
+		data, err := client.Post(ctx, fmt.Sprintf("/nodes/%s/qemu/%d/status/start", node, vmid), nil)
+		if err == nil {
+			var startUpid string
+			if json.Unmarshal(data, &startUpid) == nil {
+				return &resource.StatusResult{
+					ProgressResult: &resource.ProgressResult{
+						Operation:       resource.OperationCheckStatus,
+						OperationStatus: resource.OperationStatusInProgress,
+						RequestID:       "vm:start:" + startUpid,
+						NativeID:        req.NativeID,
+						StatusMessage:   "starting VM",
+					},
+				}, nil
+			}
+		}
+		// Start failed — fall through to success with current state
+	}
+
+	// Read back final state
+	readResult, _ := p.Read(ctx, &resource.ReadRequest{
+		NativeID:     req.NativeID,
+		ResourceType: req.ResourceType,
+		TargetConfig: req.TargetConfig,
+	})
+	var resourceProps json.RawMessage
+	if readResult != nil && readResult.Properties != "" {
+		resourceProps = json.RawMessage(readResult.Properties)
+	}
+	return &resource.StatusResult{
+		ProgressResult: &resource.ProgressResult{
+			Operation:          resource.OperationCheckStatus,
+			OperationStatus:    resource.OperationStatusSuccess,
+			NativeID:           req.NativeID,
+			ResourceProperties: resourceProps,
+		},
+	}, nil
+}
+
 // --- Update Stop→Resize→Start Status ---
 
 func (p *Plugin) pollVMUpdate(ctx context.Context, client *Client, req *resource.StatusRequest) (*resource.StatusResult, error) {
@@ -775,7 +902,6 @@ func parseVMConfig(node string, vmid int, configData, statusData json.RawMessage
 
 	props := &VMProperties{
 		ID:   compositeID(node, vmid),
-		Node: node,
 		VMID: vmid,
 	}
 
@@ -879,9 +1005,7 @@ func parseVMDiskFromConfig(spec string) *DiskProperties {
 		return d
 	}
 	volParts := strings.SplitN(parts[0], ":", 2)
-	if len(volParts) >= 1 {
-		d.Storage = volParts[0]
-	}
+	_ = volParts // storage extracted from volume spec but omitted from Read
 	for _, part := range parts[1:] {
 		kv := strings.SplitN(part, "=", 2)
 		if len(kv) != 2 {

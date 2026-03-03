@@ -7,6 +7,23 @@ import (
 	"github.com/platform-engineering-labs/formae/pkg/plugin/resource"
 )
 
+// allNodeNames returns the names of all cluster nodes.
+func allNodeNames(ctx context.Context, client *Client) []string {
+	data, err := client.Get(ctx, "/nodes")
+	if err != nil {
+		return nil
+	}
+	var nodes []proxmoxNodeListEntry
+	if err := json.Unmarshal(data, &nodes); err != nil {
+		return nil
+	}
+	names := make([]string, len(nodes))
+	for i, n := range nodes {
+		names[i] = n.Node
+	}
+	return names
+}
+
 func (p *Plugin) listNodes(ctx context.Context, client *Client, req *resource.ListRequest) (*resource.ListResult, error) {
 	data, err := client.Get(ctx, "/nodes")
 	if err != nil {

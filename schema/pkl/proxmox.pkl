@@ -78,11 +78,11 @@ class CloudImage extends formae.Resource {
 
     /// Target node name
     @formae.FieldHint { createOnly = true }
-    node: String|formae.Resolvable
+    node: (String|formae.Resolvable)?
 
     /// Storage to download to (must have "import" content type enabled)
     @formae.FieldHint { createOnly = true }
-    storage: String|formae.Resolvable
+    storage: (String|formae.Resolvable)?
 
     /// Remote URL to download from (e.g. "https://cloud-images.ubuntu.com/...")
     @formae.FieldHint { createOnly = true }
@@ -163,11 +163,11 @@ class Template extends formae.Resource {
 
     /// Target node name
     @formae.FieldHint { createOnly = true }
-    node: String|formae.Resolvable
+    node: (String|formae.Resolvable)?
 
     /// Target storage name (e.g. "local")
     @formae.FieldHint { createOnly = true }
-    storage: String|formae.Resolvable
+    storage: (String|formae.Resolvable)?
 
     /// Template filename from the Proxmox appliance index
     @formae.FieldHint { createOnly = true }
@@ -235,7 +235,7 @@ class CloudInit extends formae.SubResource {
 class VirtualMachineDisk extends formae.SubResource {
     /// Storage name (e.g. "local-lvm") or Resolvable reference to a Storage resource
     @formae.FieldHint {}
-    storage: String|formae.Resolvable
+    storage: (String|formae.Resolvable)?
 
     /// Disk size in GiB
     @formae.FieldHint {}
@@ -279,7 +279,7 @@ class VirtualMachineNetwork extends formae.SubResource {
 class VMTemplateDisk extends formae.SubResource {
     /// Storage for the imported disk (e.g. "local-lvm")
     @formae.FieldHint {}
-    storage: String|formae.Resolvable
+    storage: (String|formae.Resolvable)?
 
     /// Resize disk to this size in GiB after import (optional, must be >= image size)
     @formae.FieldHint {}
@@ -315,7 +315,7 @@ class VMTemplate extends formae.Resource {
 
     /// Target node name
     @formae.FieldHint { createOnly = true }
-    node: String|formae.Resolvable
+    node: (String|formae.Resolvable)?
 
     /// VM ID (100-999999999). Auto-assigned if omitted.
     @formae.FieldHint { createOnly = true }
@@ -331,7 +331,7 @@ class VMTemplate extends formae.Resource {
 
     /// Cloud image to import as disk (resolves to CloudImage volid)
     @formae.FieldHint { createOnly = true }
-    cloudImage: String|formae.Resolvable
+    cloudImage: (String|formae.Resolvable)?
 
     /// Memory in MiB (default for VMs cloned from this template)
     @formae.FieldHint {}
@@ -405,7 +405,7 @@ class VirtualMachine extends formae.Resource {
 
     /// Target node name (resolved from parent Node)
     @formae.FieldHint { createOnly = true }
-    node: String|formae.Resolvable
+    node: (String|formae.Resolvable)?
 
     /// VM ID (100-999999999). Auto-assigned if omitted.
     @formae.FieldHint { createOnly = true }
@@ -493,7 +493,7 @@ class VirtualMachine extends formae.Resource {
 class ContainerRootfs extends formae.SubResource {
     /// Storage name (e.g. "local-lvm") or Resolvable reference to a Storage resource
     @formae.FieldHint {}
-    storage: String|formae.Resolvable
+    storage: (String|formae.Resolvable)?
 
     /// Root filesystem size in GiB
     @formae.FieldHint {}
@@ -547,7 +547,7 @@ class Container extends formae.Resource {
 
     /// Target node name (resolved from parent Node)
     @formae.FieldHint { createOnly = true }
-    node: String|formae.Resolvable
+    node: (String|formae.Resolvable)?
 
     /// Container ID (100-999999999). Auto-assigned if omitted.
     @formae.FieldHint { createOnly = true }
@@ -563,7 +563,7 @@ class Container extends formae.Resource {
 
     /// OS template volid or Resolvable reference to a Template resource
     @formae.FieldHint { createOnly = true }
-    ostemplate: String|formae.Resolvable
+    ostemplate: (String|formae.Resolvable)?
 
     /// Memory in MiB
     @formae.FieldHint {}
